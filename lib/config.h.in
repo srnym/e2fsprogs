@@ -18,6 +18,9 @@
 /* Define to 1 to enable mmp support */
 #undef CONFIG_MMP
 
+/* Define to 1 if parallel e2fsck is enabled */
+#undef CONFIG_PFSCK
+
 /* Define to 1 to enable tdb support */
 #undef CONFIG_TDB
 
