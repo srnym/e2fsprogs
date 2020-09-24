@@ -877,13 +877,13 @@ fi
 AC_MSG_RESULT([Disabling additional bitmap statistics by default])
 )
 dnl
-dnl handle --enable-pfsck
+dnl handle --disable-pfsck
 dnl
 PTHREAD_LIB=''
 AC_CHECK_LIB(pthread,pthread_join,PTHREAD_LIB=-pthread)
 AC_SUBST(PTHREAD_LIB)
 AC_ARG_ENABLE([pfsck],
-[  --enable-pfsck     enable parallel e2fsck],
+[  --disable-pfsck     disable parallel e2fsck],
 if test "$enableval" = "no" || test -z "PTHREAD_LIB"
 then
 	AC_MSG_RESULT([Disabling parallel e2fsck])
@@ -893,7 +893,14 @@ else
 	AC_MSG_RESULT([Enabling parallel e2fsck])
 fi
 ,
-AC_MSG_RESULT([Disabling parallel e2fsck])
+if test -z "PTHREAD_LIB"
+then
+	AC_MSG_RESULT([Disabling parallel e2fsck])
+else
+	AC_DEFINE(CONFIG_PFSCK, 1,
+		[Define to 1 if parallel e2fsck is enabled])
+	AC_MSG_RESULT([Enabling parallel e2fsck by default])
+fi
 )
 dnl
 dnl
