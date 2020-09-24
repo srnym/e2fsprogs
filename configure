@@ -1589,7 +1589,7 @@ Optional Features:
   --disable-tdb           disable tdb support
   --disable-bmap-stats    disable collection of bitmap stats.
   --enable-bmap-stats-ops enable collection of additional bitmap stats
-  --enable-pfsck     enable parallel e2fsck
+  --disable-pfsck     disable parallel e2fsck
   --disable-nls           do not use Native Language Support
   --enable-threads={posix|solaris|pth|windows}
                           specify multithreading API
@@ -6169,8 +6169,17 @@ $as_echo "Enabling parallel e2fsck" >&6; }
 fi
 
 else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: result: Disabling parallel e2fsck" >&5
+  if test -z "PTHREAD_LIB"
+then
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: Disabling parallel e2fsck" >&5
 $as_echo "Disabling parallel e2fsck" >&6; }
+else
+
+$as_echo "#define CONFIG_PFSCK 1" >>confdefs.h
+
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: Enabling parallel e2fsck by default" >&5
+$as_echo "Enabling parallel e2fsck by default" >&6; }
+fi
 
 fi
 
