@@ -1100,7 +1100,8 @@ static void pass1_readahead(e2fsck_t ctx, dgrp_t *group, ext2_ino_t *next_ino)
 	errcode_t err = EXT2_ET_INVALID_ARGUMENT;
 
 #ifdef CONFIG_PFSCK
-	grp_end = ctx->thread_info.et_group_end;
+	if (ctx->fs->fs_num_threads > 1)
+		grp_end = ctx->thread_info.et_group_end;
 #endif
 	if (ctx->readahead_kb == 0)
 		goto out;
