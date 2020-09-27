@@ -4207,9 +4207,9 @@ report_problem:
 					}
 					continue;
 				}
+				e2fsck_pass1_fix_lock(ctx);
 				e2fsck_read_bitmaps(ctx);
 				pb->inode_modified = 1;
-				e2fsck_pass1_fix_lock(ctx);
 				pctx->errcode =
 					ext2fs_extent_delete(ehandle, 0);
 				e2fsck_pass1_fix_unlock(ctx);

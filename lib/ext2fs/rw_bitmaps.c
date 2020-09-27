@@ -445,14 +445,6 @@ success_cleanup:
 	return 0;
 
 cleanup:
-	if (do_block) {
-		ext2fs_free_block_bitmap(fs->block_map);
-		fs->block_map = 0;
-	}
-	if (do_inode) {
-		ext2fs_free_inode_bitmap(fs->inode_map);
-		fs->inode_map = 0;
-	}
 	if (inode_bitmap)
 		ext2fs_free_mem(&inode_bitmap);
 	if (block_bitmap)
@@ -463,9 +455,12 @@ cleanup:
 
 }
 
-static errcode_t read_bitmaps_range_end(ext2_filsys fs, int do_inode, int do_block)
+static errcode_t read_bitmaps_range_end(ext2_filsys fs, int do_inode, int do_block,
+					errcode_t retval)
 {
-	errcode_t retval = 0;
+
+	if (retval)
+		goto cleanup;
 
 	/* Mark group blocks for any BLOCK_UNINIT groups */
 	if (do_block) {
@@ -474,7 +469,7 @@ static errcode_t read_bitmaps_range_end(ext2_filsys fs, int do_inode, int do_blo
 			goto cleanup;
 	}
 
-	return retval;
+	return 0;
 cleanup:
 	if (do_block) {
 		ext2fs_free_block_bitmap(fs->block_map);
@@ -500,7 +495,7 @@ static errcode_t read_bitmaps_range(ext2_filsys fs, int do_inode, int do_block,
 	if (retval)
 		return retval;
 
-	return read_bitmaps_range_end(fs, do_inode, do_block);
+	return read_bitmaps_range_end(fs, do_inode, do_block, retval);
 }
 
 struct read_bitmaps_thread_info {
@@ -629,9 +624,7 @@ out:
 	free(thread_infos);
 	free(thread_ids);
 
-	if (!retval)
-		retval = read_bitmaps_range_end(fs, do_inode, do_block);
-
+	retval = read_bitmaps_range_end(fs, do_inode, do_block, retval);
 	if (!retval) {
 		if (do_inode)
 			fs->flags &= ~EXT2_FLAG_IBITMAP_TAIL_PROBLEM;
