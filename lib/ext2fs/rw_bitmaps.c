@@ -269,7 +269,7 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 	dgrp_t i;
 	char *block_bitmap = 0, *inode_bitmap = 0;
 	char *buf;
-	errcode_t retval;
+	errcode_t retval = 0;
 	int block_nbytes = EXT2_CLUSTERS_PER_GROUP(fs->super) / 8;
 	int inode_nbytes = EXT2_INODES_PER_GROUP(fs->super) / 8;
 	int tail_flags = 0;
@@ -432,18 +432,12 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 
 success_cleanup:
 	if (start == 0 && end == fs->group_desc_count - 1) {
-		if (inode_bitmap) {
-			ext2fs_free_mem(&inode_bitmap);
+		if (inode_bitmap)
 			fs->flags &= ~EXT2_FLAG_IBITMAP_TAIL_PROBLEM;
-		}
-		if (block_bitmap) {
-			ext2fs_free_mem(&block_bitmap);
+		if (block_bitmap)
 			fs->flags &= ~EXT2_FLAG_BBITMAP_TAIL_PROBLEM;
-		}
 	}
 	fs->flags |= tail_flags;
-	return 0;
-
 cleanup:
 	if (inode_bitmap)
 		ext2fs_free_mem(&inode_bitmap);
@@ -451,8 +445,8 @@ cleanup:
 		ext2fs_free_mem(&block_bitmap);
 	if (buf)
 		ext2fs_free_mem(&buf);
-	return retval;
 
+	return retval;
 }
 
 static errcode_t read_bitmaps_range_end(ext2_filsys fs, int do_inode, int do_block,
