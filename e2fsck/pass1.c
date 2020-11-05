@@ -2255,6 +2255,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	ext2fs_block_bitmap block_map;
 	ext2_badblocks_list badblocks;
 	ext2_dblist dblist;
+	int flags;
 
 	dest_io = dest->io;
 	dest_image_io = dest->image_io;
@@ -2262,6 +2263,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	block_map = dest->block_map;
 	badblocks = dest->badblocks;
 	dblist = dest->dblist;
+	flags = dest->flags;
 	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
 	dest->io = dest_io;
 	dest->image_io = dest_image_io;
@@ -2269,6 +2271,9 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	dest->block_map = block_map;
 	dest->badblocks = badblocks;
 	dest->dblist = dblist;
+	dest->flags = src->flags | flags;
+	if (!(src->flags & EXT2_FLAG_VALID) || !(flags & EXT2_FLAG_VALID))
+		ext2fs_unmark_valid(dest);
 	/*
 	 * PASS1_MERGE_FS_BITMAP might return directly from this function,
 	 * so please do NOT leave any garbage behind after returning.
