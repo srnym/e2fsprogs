@@ -2102,6 +2102,13 @@ static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, ext2_filsys src)
 		dest->inode_map->fs = dest;
 	if (dest->block_map)
 		dest->block_map->fs = dest;
+
+	/* icache will be rebuilt if needed, so do not copy from @src */
+	if (src->icache) {
+		ext2fs_free_inode_cache(src->icache);
+		src->icache = NULL;
+	}
+	dest->icache = NULL;
 	return 0;
 }
 
@@ -2116,6 +2123,13 @@ static void e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 		dest->inode_map->fs = dest;
 	if (dest->block_map)
 		dest->block_map->fs = dest;
+
+	/* icache will be rebuilt if needed, so do not copy from @src */
+	if (src->icache) {
+		ext2fs_free_inode_cache(src->icache);
+		src->icache = NULL;
+	}
+	dest->icache = NULL;
 }
 
 static errcode_t e2fsck_pass1_thread_prepare(e2fsck_t global_ctx, e2fsck_t *thread_ctx)
