@@ -1314,6 +1314,7 @@ static void e2fsck_pass1_set_thread_num(e2fsck_t ctx)
 			num_threads = max_threads / times;
 	}
 	ctx->fs_num_threads = num_threads;
+	ctx->fs->fs_num_threads = num_threads;
 }
 
 static void init_ext2_max_sizes()
