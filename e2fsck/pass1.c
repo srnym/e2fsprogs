@@ -2087,43 +2087,78 @@ endit:
 		ctx->invalid_bitmaps++;
 }
 
+#define PASS1_COPY_FS_BITMAP(_dest, _src, _map_filed)			\
+do {									\
+    errcode_t _ret;							\
+    if (_src->_map_filed) {						\
+        _ret = ext2fs_copy_bitmap(_src->_map_filed, &_dest->_map_filed);\
+        if (_ret)							\
+            return _ret;						\
+        _dest->_map_filed->fs = _dest;					\
+									\
+        ext2fs_free_generic_bmap(_src->_map_filed);			\
+        _src->_map_filed = NULL;					\
+    }									\
+} while (0)
+
+#define PASS1_COPY_CTX_BITMAP(_dest, _src, _map_filed)			\
+do {									\
+    errcode_t _ret;							\
+    if (_src->_map_filed) {						\
+        _ret = ext2fs_copy_bitmap(_src->_map_filed, &_dest->_map_filed);\
+        if (_ret)							\
+            return _ret;						\
+        _dest->_map_filed->fs = _dest->fs;				\
+									\
+        ext2fs_free_generic_bmap(_src->_map_filed);			\
+        _src->_map_filed = NULL;					\
+    }									\
+} while (0)
+
 static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, ext2_filsys src)
 {
 	errcode_t	retval;
 
 	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
-	if (dest->dblist) {
+	/*
+	 * PASS1_COPY_FS_BITMAP might return directly from this function,
+	 * so please do NOT leave any garbage behind after returning.
+	 */
+	PASS1_COPY_FS_BITMAP(dest, src, inode_map);
+	PASS1_COPY_FS_BITMAP(dest, src, block_map);
+
+	/* icache will be rebuilt if needed, so do not copy from @src */
+	if (src->icache) {
+		ext2fs_free_inode_cache(src->icache);
+		src->icache = NULL;
+	}
+	dest->icache = NULL;
+
+	if (src->dblist) {
 		retval = ext2fs_copy_dblist(src->dblist, &dest->dblist);
 		if (retval)
 			return retval;
 		/* The ext2fs_copy_dblist() uses the src->fs as the fs */
 		dest->dblist->fs = dest;
-	}
-	if (dest->inode_map)
-		dest->inode_map->fs = dest;
-	if (dest->block_map)
-		dest->block_map->fs = dest;
 
-	/* icache will be rebuilt if needed, so do not copy from @src */
-	if (src->icache) {
-		ext2fs_free_inode_cache(src->icache);
-		src->icache = NULL;
+		ext2fs_free_dblist(src->dblist);
+		src->dblist = NULL;
 	}
-	dest->icache = NULL;
+
 	return 0;
 }
 
-static void e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
+static int e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 {
-	if (dest->dblist)
-		ext2fs_free_dblist(dest->dblist);
+	errcode_t	retval = 0;
+
 	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
-	if (dest->dblist)
-		dest->dblist->fs = dest;
-	if (dest->inode_map)
-		dest->inode_map->fs = dest;
-	if (dest->block_map)
-		dest->block_map->fs = dest;
+	/*
+	 * PASS1_COPY_FS_BITMAP might return directly from this function,
+	 * so please do NOT leave any garbage behind after returning.
+	 */
+	PASS1_COPY_FS_BITMAP(dest, src, inode_map);
+	PASS1_COPY_FS_BITMAP(dest, src, block_map);
 
 	/* icache will be rebuilt if needed, so do not copy from @src */
 	if (src->icache) {
@@ -2131,6 +2166,18 @@ static void e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 		src->icache = NULL;
 	}
 	dest->icache = NULL;
+
+	if (dest->dblist) {
+		retval = ext2fs_copy_dblist(src->dblist, &dest->dblist);
+		if (retval == 0) {
+			/* The ext2fs_copy_dblist() uses the src->fs as the fs */
+			dest->dblist->fs = dest;
+		}
+
+		ext2fs_free_dblist(src->dblist);
+		src->dblist = NULL;
+	}
+	return retval;
 }
 
 static errcode_t e2fsck_pass1_thread_prepare(e2fsck_t global_ctx, e2fsck_t *thread_ctx)
@@ -2183,8 +2230,9 @@ out_context:
 	return retval;
 }
 
-static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
+	errcode_t	retval;
 	int		flags = global_ctx->flags;
 	ext2_filsys	thread_fs = thread_ctx->fs;
 	ext2_filsys	global_fs = global_ctx->fs;
@@ -2201,13 +2249,40 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 	global_ctx->flags |= (flags & E2F_FLAG_SIGNAL_MASK) |
 			     (global_ctx->flags & E2F_FLAG_SIGNAL_MASK);
 
-	e2fsck_pass1_merge_fs(global_fs, thread_fs);
+	retval = e2fsck_pass1_merge_fs(global_fs, thread_fs);
+	if (retval) {
+		com_err(global_ctx->program_name, 0, _("while merging fs\n"));
+		return retval;
+	}
 	global_fs->priv_data = global_ctx;
 	global_ctx->fs = global_fs;
 
+	/*
+	 * PASS1_COPY_CTX_BITMAP might return directly from this function,
+	 * so please do NOT leave any garbage behind after returning.
+	 */
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inode_used_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inode_dir_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inode_bb_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inode_imagic_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inode_reg_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, inodes_to_rebuild);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, block_found_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, block_dup_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, block_ea_map);
+	PASS1_COPY_CTX_BITMAP(global_ctx, thread_ctx, block_metadata_map);
+	return 0;
+}
+
+static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+{
+	errcode_t	retval;
+
+	retval = e2fsck_pass1_thread_join_one(global_ctx, thread_ctx);
 	ext2fs_free_mem(&thread_ctx->fs);
 	ext2fs_free_mem(&thread_ctx);
-	return 0;
+
+	return retval;
 }
 
 void e2fsck_pass1_multithread(e2fsck_t ctx)
