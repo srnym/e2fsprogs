@@ -2799,6 +2799,23 @@ static void e2fsck_pass1_multithread(e2fsck_t global_ctx)
 	struct e2fsck_thread_info	*infos = NULL;
 	int				 num_threads = 1;
 	errcode_t			 retval;
+	unsigned			 flexbg_size = 1;
+	int 				 max_threads;
+
+	if (ext2fs_has_feature_flex_bg(global_ctx->fs->super))
+		flexbg_size = 1 << global_ctx->fs->super->s_log_groups_per_flex;
+
+	max_threads = global_ctx->fs->group_desc_count / flexbg_size;
+	if (max_threads == 0)
+		num_threads = 1;
+	else if (max_threads % num_threads) {
+		int times = max_threads / num_threads;
+
+		if (times == 0)
+			num_threads = 1;
+		else
+			num_threads = max_threads / times;
+	}
 
 	retval = e2fsck_pass1_threads_start(&infos, num_threads, global_ctx);
 	if (retval) {
