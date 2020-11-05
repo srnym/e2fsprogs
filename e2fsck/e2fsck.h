@@ -229,6 +229,8 @@ typedef struct e2fsck_struct *e2fsck_t;
 
 struct e2fsck_struct {
 	/* ---- Following fields are never updated during the pass1 ---- */
+	/* Global context to get the cancel flag */
+	e2fsck_t		global_ctx;
 	const char *program_name;
 	char *filesystem_name;
 	char *device_name;
