@@ -2979,6 +2979,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	ext2fs_inode_bitmap inode_imagic_map = global_ctx->inode_imagic_map;
 	ext2fs_inode_bitmap inode_reg_map = global_ctx->inode_reg_map;
 	ext2fs_block_bitmap inodes_to_rebuild = global_ctx->inodes_to_rebuild;
+	ext2fs_inode_bitmap inode_bad_map = global_ctx->inode_bad_map;
 	ext2_icount_t inode_count = global_ctx->inode_count;
 	ext2_icount_t inode_link_info = global_ctx->inode_link_info;
 	__u32	fs_directory_count = global_ctx->fs_directory_count;
@@ -3035,6 +3036,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	global_ctx->inode_reg_map = inode_reg_map;
 	global_ctx->block_dup_map = block_dup_map;
 	global_ctx->block_found_map = block_found_map;
+	global_ctx->inode_bad_map = inode_bad_map;
 	global_ctx->dir_info = dir_info;
 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
 	global_ctx->dx_dir_info = dx_dir_info;
@@ -3114,6 +3116,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	 * so please do NOT leave any garbage behind after returning.
 	 */
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_used_map);
+	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_bad_map);
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_dir_map);
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_bb_map);
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_imagic_map);
@@ -3158,6 +3161,7 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 	PASS1_FREE_CTX_BITMAP(thread_ctx, inodes_to_rebuild);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_found_map);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_ea_map);
+	PASS1_FREE_CTX_BITMAP(thread_ctx, inode_bad_map);
 	ext2fs_free_icount(thread_ctx->inode_count);
 	ext2fs_free_icount(thread_ctx->inode_link_info);
 	if (thread_ctx->refcount) {
