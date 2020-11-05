@@ -280,10 +280,156 @@ out:
 static int handle_nomem(e2fsck_t ctx, struct problem_context *pctx,
 			size_t size_needed)
 {
+	if (!pctx)
+		return -ENOMEM;
+
 	pctx->num = size_needed;
 	fix_problem(ctx, PR_1_ALLOCATE_ENCRYPTED_INODE_LIST, pctx);
 	/* Should never get here */
 	ctx->flags |= E2F_FLAG_ABORT;
+	return 0;
+}
+
+static int increase_file_ranges_capacity(e2fsck_t ctx,
+					 struct encrypted_file_info *info,
+					 struct problem_context *pctx)
+{
+	int size = sizeof(struct encrypted_file_range);
+
+	if (info->file_ranges_count == info->file_ranges_capacity) {
+		/* Double the capacity by default. */
+		size_t new_capacity = info->file_ranges_capacity * 2;
+
+		/* ... but go from 0 to 128 right away. */
+		if (new_capacity < 128)
+			new_capacity = 128;
+
+		/* We won't need more than the filesystem's inode count. */
+		if (new_capacity > ctx->fs->super->s_inodes_count)
+			new_capacity = ctx->fs->super->s_inodes_count;
+
+		/* To be safe, ensure the capacity really increases. */
+		if (new_capacity < info->file_ranges_capacity + 1)
+			new_capacity = info->file_ranges_capacity + 1;
+
+		if (ext2fs_resize_mem(info->file_ranges_capacity * size,
+				new_capacity * size, &info->file_ranges) != 0)
+			return handle_nomem(ctx, pctx,
+					    new_capacity * size);
+
+		info->file_ranges_capacity = new_capacity;
+	}
+
+	return 0;
+}
+
+int find_entry_insert(e2fsck_t dest_ctx,
+		      struct encrypted_file_range *insert_range)
+{
+	size_t l, r, m;
+	struct encrypted_file_range *range;
+	int merge_left = 0, merge_right = 0;
+	struct encrypted_file_info *dest_info = dest_ctx->encrypted_files;
+	int ret;
+
+	l = 0;
+	r = dest_info->file_ranges_count;
+	if (r < 1)
+		return -EINVAL;
+
+	while (l < r) {
+		m = l + (r - l) / 2;
+		range = &dest_info->file_ranges[m];
+
+		if (insert_range->first_ino < range->first_ino)
+			r = m;
+		else if (insert_range->first_ino > range->last_ino)
+			l = m + 1;
+		else /* should not happen */ {
+			return -EINVAL;
+		}
+	}
+
+	/* check wheather it could be merged left */
+	if (l >= 1) {
+		range = &dest_info->file_ranges[l - 1];
+		if (range->last_ino + 1 ==
+		    insert_range->first_ino &&
+		    range->policy_id == insert_range->policy_id) {
+			range->last_ino = insert_range->last_ino;
+			merge_left = 1;
+		}
+	}
+
+	/* check wheather it could be merged right */
+	if (l < dest_info->file_ranges_count - 1) {
+		range = &dest_info->file_ranges[l + 1];
+		if (range->first_ino ==
+		    insert_range->last_ino + 1 &&
+		    range->policy_id == insert_range->policy_id) {
+			range->first_ino = insert_range->first_ino;
+			merge_right = 1;
+		}
+	}
+	/* check if we could shrink array */
+	if (merge_left && merge_right) {
+		for (m = l; m < dest_info->file_ranges_count - 1;
+			m++)
+			dest_info->file_ranges[m] =
+				dest_info->file_ranges[m + 1];
+
+		dest_info->file_ranges_count--;
+		return 0;
+	} else if (merge_left || merge_right) { /* return directly */
+		return 0;
+	}
+
+	ret = increase_file_ranges_capacity(dest_ctx, dest_info, NULL);
+	if (ret)
+		return ret;
+
+	/* move forward */
+	for (m = dest_info->file_ranges_count; m >= l; m--)
+		dest_info->file_ranges[m + 1] =
+			dest_info->file_ranges[m];
+
+	dest_info->file_ranges[l] = *insert_range;
+	dest_info->file_ranges_count++;
+	return 0;
+}
+
+int merge_two_encrypted_files(e2fsck_t src_ctx, e2fsck_t dest_ctx)
+{
+	struct encrypted_file_info *src_info = src_ctx->encrypted_files;
+	struct encrypted_file_info *dest_info = dest_ctx->encrypted_files;
+	struct encrypted_file_range *range;
+	__u32 policy_id;
+	errcode_t retval;
+	size_t i;
+
+	/* nothing to merge */
+	if (!src_info)
+		return 0;
+
+	if (!dest_info) {
+		dest_ctx->encrypted_files = src_info;
+		src_ctx->encrypted_files = NULL;
+		return 0;
+	}
+
+	for (i = 0; i < src_info->file_ranges_count; i++) {
+		range = &src_info->file_ranges[i];
+		retval = get_encryption_policy_id(dest_ctx, range->first_ino,
+						  &policy_id);
+		if (retval != 0)
+			return retval;
+		/* reset policy id */
+		range->policy_id = policy_id;
+		retval = find_entry_insert(dest_ctx, range);
+		if (retval)
+			return retval;
+	}
+
 	return 0;
 }
 
@@ -292,6 +438,7 @@ static int append_ino_and_policy_id(e2fsck_t ctx, struct problem_context *pctx,
 {
 	struct encrypted_file_info *info = ctx->encrypted_files;
 	struct encrypted_file_range *range;
+	int ret;
 
 	/* See if we can just extend the last range. */
 	if (info->file_ranges_count > 0) {
@@ -310,32 +457,10 @@ static int append_ino_and_policy_id(e2fsck_t ctx, struct problem_context *pctx,
 		}
 	}
 	/* Nope, a new range is needed. */
+	ret = increase_file_ranges_capacity(ctx, info, pctx);
+	if (ret)
+		return ret;
 
-	if (info->file_ranges_count == info->file_ranges_capacity) {
-		/* Double the capacity by default. */
-		size_t new_capacity = info->file_ranges_capacity * 2;
-
-		/* ... but go from 0 to 128 right away. */
-		if (new_capacity < 128)
-			new_capacity = 128;
-
-		/* We won't need more than the filesystem's inode count. */
-		if (new_capacity > ctx->fs->super->s_inodes_count)
-			new_capacity = ctx->fs->super->s_inodes_count;
-
-		/* To be safe, ensure the capacity really increases. */
-		if (new_capacity < info->file_ranges_capacity + 1)
-			new_capacity = info->file_ranges_capacity + 1;
-
-		if (ext2fs_resize_mem(info->file_ranges_capacity *
-					sizeof(*range),
-				      new_capacity * sizeof(*range),
-				      &info->file_ranges) != 0)
-			return handle_nomem(ctx, pctx,
-					    new_capacity * sizeof(*range));
-
-		info->file_ranges_capacity = new_capacity;
-	}
 	range = &info->file_ranges[info->file_ranges_count++];
 	range->first_ino = ino;
 	range->last_ino = ino;
