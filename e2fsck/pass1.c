@@ -1294,6 +1294,27 @@ static void e2fsck_pass1_set_thread_num(e2fsck_t ctx)
 	ctx->fs_num_threads = num_threads;
 }
 
+static void init_ext2_max_sizes()
+{
+	int	i;
+	__u64	max_sizes;
+
+	/*
+	 * Init ext2_max_sizes which will be immutable and shared between
+	 * threads
+	 */
+#define EXT2_BPP(bits) (1ULL << ((bits) - 2))
+
+	for (i = EXT2_MIN_BLOCK_LOG_SIZE; i <= EXT2_MAX_BLOCK_LOG_SIZE; i++) {
+		max_sizes = EXT2_NDIR_BLOCKS + EXT2_BPP(i);
+		max_sizes = max_sizes + EXT2_BPP(i) * EXT2_BPP(i);
+		max_sizes = max_sizes + EXT2_BPP(i) * EXT2_BPP(i) * EXT2_BPP(i);
+		max_sizes = (max_sizes * (1UL << i));
+		ext2_max_sizes[i - EXT2_MIN_BLOCK_LOG_SIZE] = max_sizes;
+	}
+#undef EXT2_BPP
+}
+
 /*
  * We need call mark_table_blocks() before multiple
  * thread start, since all known system blocks should be
@@ -1305,6 +1326,7 @@ static int _e2fsck_pass1_prepare(e2fsck_t ctx)
 	ext2_filsys fs = ctx->fs;
 	unsigned long long readahead_kb;
 
+	init_ext2_max_sizes();
 	e2fsck_pass1_set_thread_num(ctx);
 	/* If we can do readahead, figure out how many groups to pull in. */
 	if (!e2fsck_can_readahead(ctx->fs))
@@ -1967,6 +1989,10 @@ clear_inode:
 
 		if (ino == EXT2_BAD_INO) {
 			struct process_block_struct pb;
+			e2fsck_t global_ctx = ctx;
+
+			if (ctx->global_ctx)
+				global_ctx = ctx->global_ctx;
 
 			if ((failed_csum || inode->i_mode || inode->i_uid ||
 			     inode->i_gid || inode->i_links_count ||
@@ -1982,7 +2008,7 @@ clear_inode:
 			}
 
 			e2fsck_pass1_block_map_r_lock(ctx);
-			pctx.errcode = ext2fs_copy_bitmap(ctx->global_ctx->block_found_map,
+			pctx.errcode = ext2fs_copy_bitmap(global_ctx->block_found_map,
 							  &pb.fs_meta_blocks);
 			e2fsck_pass1_block_map_r_unlock(ctx);
 			if (pctx.errcode) {
@@ -3277,10 +3303,6 @@ static void e2fsck_pass1_multithread(e2fsck_t global_ctx)
 	struct e2fsck_thread_info	*infos = NULL;
 	errcode_t			 retval;
 
-	retval = _e2fsck_pass1_prepare(global_ctx);
-	if (retval)
-		goto out_abort;
-
 	pthread_mutex_init(&global_ctx->fs_fix_mutex, NULL);
 	pthread_rwlock_init(&global_ctx->fs_block_map_rwlock, NULL);
 
@@ -3305,7 +3327,11 @@ out_abort:
 
 void e2fsck_pass1(e2fsck_t ctx)
 {
-	e2fsck_pass1_multithread(ctx);
+	_e2fsck_pass1_prepare(ctx);
+	if (ctx->options & E2F_OPT_MULTITHREAD)
+		e2fsck_pass1_multithread(ctx);
+	else
+		_e2fsck_pass1(ctx);
 	_e2fsck_pass1_post(ctx);
 }
 
