@@ -227,17 +227,12 @@ typedef struct e2fsck_struct *e2fsck_t;
 #define MAX_EXTENT_DEPTH_COUNT 5
 
 struct e2fsck_struct {
-	ext2_filsys fs;
+	/* ---- Following fields are never updated during the pass1 ---- */
 	const char *program_name;
 	char *filesystem_name;
 	char *device_name;
 	char *io_options;
-	FILE	*logf;
-	char	*log_fn;
-	FILE	*problem_logf;
-	char	*problem_log_fn;
-	int	flags;		/* E2fsck internal flags */
-	int	options;
+	int	options;  /* E2F_OPT_* flags */
 	unsigned blocksize;	/* blocksize */
 	blk64_t	use_superblock;	/* sb requested by user */
 	blk64_t	superblock;	/* sb used to open fs */
@@ -251,10 +246,76 @@ struct e2fsck_struct {
 #ifdef HAVE_SETJMP_H
 	jmp_buf	abort_loc;
 #endif
-	unsigned long abort_code;
+#ifdef RESOURCE_TRACK
+	/*
+	 * For timing purposes
+	 */
+	struct resource_track	global_rtrack;
+#endif
+	int bad_lost_and_found;
+	/*
+	 * Tuning parameters
+	 */
+	int process_inode_size;
+	int inode_buffer_blocks;
+	unsigned int htree_slack_percentage;
+
+	/*
+	 * ext3 journal support
+	 */
+	io_channel	journal_io;
+	char	*journal_name;
+	/* misc fields */
+	time_t now;
+
+	time_t time_fudge;	/* For working around buggy init scripts */
+	int ext_attr_ver;
+	int blocks_per_page;
+	int interactive;	/* Are we connected directly to a tty? */
+	char start_meta[2], stop_meta[2];
+	/*
+	 * For the use of callers of the e2fsck functions; not used by
+	 * e2fsck functions themselves.
+	 */
+	void *priv_data;
+	/* Undo file */
+	char *undo_file;
+	/* How much are we allowed to readahead? */
+	unsigned long long readahead_kb;
+
+	/* ---- Following fields are shared by different threads for pass1 -*/
+	int	flags;		/* E2fsck internal flags */
+	/*
+	 * How we display the progress update (for unix)
+	 */
+	int progress_fd;
+	int progress_pos;
+	int progress_last_percent;
+	unsigned int progress_last_time;
 
 	int (*progress)(e2fsck_t ctx, int pass, unsigned long cur,
 			unsigned long max);
+	/*
+	 * For the use of callers of the e2fsck functions; not used by
+	 * e2fsck functions themselves.
+	 */
+	ext2fs_block_bitmap block_metadata_map; /* Metadata blocks */
+	profile_t	profile;
+
+	/* Reserve blocks for root and l+f re-creation */
+	blk64_t root_repair_block, lnf_repair_block;
+
+	/*
+	 * Location of the lost and found directory
+	 */
+	ext2_ino_t lost_and_found;
+
+	/* ---- Following fields are seperated for each thread for pass1- */
+	ext2_filsys fs;
+	FILE	*logf;
+	char	*log_fn;
+	FILE	*problem_logf;
+	char	*problem_log_fn;
 
 	ext2fs_inode_bitmap inode_used_map; /* Inodes which are in use */
 	ext2fs_inode_bitmap inode_bad_map; /* Inodes which are bad somehow */
@@ -262,7 +323,8 @@ struct e2fsck_struct {
 	ext2fs_inode_bitmap inode_bb_map; /* Inodes which are in bad blocks */
 	ext2fs_inode_bitmap inode_imagic_map; /* AFS inodes */
 	ext2fs_inode_bitmap inode_reg_map; /* Inodes which are regular files*/
-
+	/* Inodes to rebuild extent trees */
+	ext2fs_inode_bitmap inodes_to_rebuild;
 	ext2fs_block_bitmap block_found_map; /* Blocks which are in use */
 	ext2fs_block_bitmap block_dup_map; /* Blks referenced more than once */
 	ext2fs_block_bitmap block_ea_map; /* Blocks which are used by EA's */
@@ -307,11 +369,7 @@ struct e2fsck_struct {
 	ext2_ino_t stashed_ino;
 	struct ext2_inode *stashed_inode;
 
-	/*
-	 * Location of the lost and found directory
-	 */
-	ext2_ino_t lost_and_found;
-	int bad_lost_and_found;
+
 
 	/*
 	 * Directory information
@@ -336,38 +394,10 @@ struct e2fsck_struct {
 	struct encrypted_file_info *encrypted_files;
 
 	/*
-	 * Tuning parameters
-	 */
-	int process_inode_size;
-	int inode_buffer_blocks;
-	unsigned int htree_slack_percentage;
-
-	/*
-	 * ext3 journal support
-	 */
-	io_channel	journal_io;
-	char	*journal_name;
-
-	/*
 	 * Ext4 quota support
 	 */
 	quota_ctx_t qctx;
-#ifdef RESOURCE_TRACK
-	/*
-	 * For timing purposes
-	 */
-	struct resource_track	global_rtrack;
-#endif
 
-	/*
-	 * How we display the progress update (for unix)
-	 */
-	int progress_fd;
-	int progress_pos;
-	int progress_last_percent;
-	unsigned int progress_last_time;
-	int interactive;	/* Are we connected directly to a tty? */
-	char start_meta[2], stop_meta[2];
 
 	/* File counts */
 	__u32 fs_directory_count;
@@ -390,34 +420,6 @@ struct e2fsck_struct {
 	__u32 fs_ext_attr_inodes;
 	__u32 fs_ext_attr_blocks;
 	__u32 extent_depth_count[MAX_EXTENT_DEPTH_COUNT];
-
-	/* misc fields */
-	time_t now;
-	time_t time_fudge;	/* For working around buggy init scripts */
-	int ext_attr_ver;
-	profile_t	profile;
-	int blocks_per_page;
-
-	/* Reserve blocks for root and l+f re-creation */
-	blk64_t root_repair_block, lnf_repair_block;
-
-	/*
-	 * For the use of callers of the e2fsck functions; not used by
-	 * e2fsck functions themselves.
-	 */
-	void *priv_data;
-	ext2fs_block_bitmap block_metadata_map; /* Metadata blocks */
-
-	/* How much are we allowed to readahead? */
-	unsigned long long readahead_kb;
-
-	/*
-	 * Inodes to rebuild extent trees
-	 */
-	ext2fs_inode_bitmap inodes_to_rebuild;
-
-	/* Undo file */
-	char *undo_file;
 };
 
 /* Data structures to evaluate whether an extent tree needs rebuilding. */
