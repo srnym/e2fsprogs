@@ -443,6 +443,8 @@ struct e2fsck_struct {
 	__u32 fs_ext_attr_inodes;
 	__u32 fs_ext_attr_blocks;
 	__u32 extent_depth_count[MAX_EXTENT_DEPTH_COUNT];
+	/* serialize fix operation for multiple threads */
+	pthread_mutex_t		 fs_fix_mutex;
 };
 
 #ifdef DEBUG_THREADS
