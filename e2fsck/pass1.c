@@ -673,14 +673,14 @@ static void check_is_really_dir(e2fsck_t ctx, struct problem_context *pctx,
 	    LINUX_S_ISLNK(inode->i_mode) || inode->i_block[0] == 0)
 		return;
 
-	/* 
+	/*
 	 * Check the block numbers in the i_block array for validity:
 	 * zero blocks are skipped (but the first one cannot be zero -
 	 * see above), other blocks are checked against the first and
 	 * max data blocks (from the the superblock) and against the
 	 * block bitmap. Any invalid block found means this cannot be
 	 * a directory.
-	 * 
+	 *
 	 * If there are non-zero blocks past the fourth entry, then
 	 * this cannot be a device file: we remember that for the next
 	 * check.
@@ -2115,7 +2115,37 @@ do {									\
     }									\
 } while (0)
 
-static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, ext2_filsys src)
+static errcode_t pass1_open_io_channel(ext2_filsys fs,
+				       const char *io_options,
+				       io_manager manager, int flags)
+{
+	errcode_t	retval;
+	unsigned int	io_flags = 0;
+
+	if (flags & EXT2_FLAG_RW)
+		io_flags |= IO_FLAG_RW;
+	if (flags & EXT2_FLAG_EXCLUSIVE)
+		io_flags |= IO_FLAG_EXCLUSIVE;
+	if (flags & EXT2_FLAG_DIRECT_IO)
+		io_flags |= IO_FLAG_DIRECT_IO;
+	retval = manager->open(fs->device_name, io_flags, &fs->io);
+	if (retval)
+		return retval;
+
+	if (io_options &&
+	    (retval = io_channel_set_options(fs->io, io_options)))
+		goto out_close;
+	fs->image_io = fs->io;
+	fs->io->app_data = fs;
+
+	return 0;
+out_close:
+	io_channel_close(fs->io);
+	return retval;
+}
+
+static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, e2fsck_t src_context,
+				      ext2_filsys src)
 {
 	errcode_t	retval;
 
@@ -2153,7 +2183,9 @@ static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, ext2_filsys src)
 		ext2fs_badblocks_list_free(src->badblocks);
 		src->badblocks = NULL;
 	}
+
 	return 0;
+
 out_dblist:
 	ext2fs_free_dblist(dest->dblist);
 	dest->dblist = NULL;
@@ -2162,9 +2194,15 @@ out_dblist:
 
 static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 {
-	errcode_t	retval = 0;
+	errcode_t retval = 0;
+	io_channel dest_io;
+	io_channel dest_image_io;
 
+	dest_io = dest->io;
+	dest_image_io = dest->image_io;
 	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
+	dest->io = dest_io;
+	dest->image_io = dest_image_io;
 	/*
 	 * PASS1_COPY_FS_BITMAP might return directly from this function,
 	 * so please do NOT leave any garbage behind after returning.
@@ -2252,7 +2290,8 @@ static errcode_t e2fsck_pass1_thread_prepare(e2fsck_t global_ctx, e2fsck_t *thre
 		goto out_context;
 	}
 
-	retval = e2fsck_pass1_copy_fs(thread_fs, global_fs);
+	io_channel_flush_cleanup(global_fs->io);
+	retval = e2fsck_pass1_copy_fs(thread_fs, global_ctx, global_fs);
 	if (retval) {
 		com_err(global_ctx->program_name, retval, "while copying fs");
 		goto out_fs;
