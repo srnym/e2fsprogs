@@ -2389,11 +2389,6 @@ do {									\
     }									\
 } while (0)
 
-#define PASS1_MERGE_CTX_COUNT(_dest, _src, _field)			\
-do {									\
-    _dest->_field = _field + _src->_field;				\
-} while (0)
-
 static errcode_t pass1_open_io_channel(ext2_filsys fs,
 				       const char *io_options,
 				       io_manager manager, int flags)
@@ -2485,6 +2480,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	ext2_badblocks_list badblocks;
 	ext2_dblist dblist;
 	int flags;
+	e2fsck_t dest_ctx = dest->priv_data;
 
 	dest_io = dest->io;
 	dest_image_io = dest->image_io;
@@ -2500,6 +2496,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	dest->block_map = block_map;
 	dest->badblocks = badblocks;
 	dest->dblist = dblist;
+	dest->priv_data = dest_ctx;
 	dest->flags = src->flags | flags;
 	if (!(src->flags & EXT2_FLAG_VALID) || !(flags & EXT2_FLAG_VALID))
 		ext2fs_unmark_valid(dest);
@@ -2963,133 +2960,51 @@ static errcode_t e2fsck_pass1_merge_ea_refcount(e2fsck_t global_ctx,
 	return retval;
 }
 
-static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+static errcode_t e2fsck_pass1_merge_context(e2fsck_t global_ctx,
+					    e2fsck_t thread_ctx)
 {
 	errcode_t	 retval;
-	int		 flags = global_ctx->flags;
-	ext2_filsys	 thread_fs = thread_ctx->fs;
-	ext2_filsys	 global_fs = global_ctx->fs;
-	FILE		*global_logf = global_ctx->logf;
-	FILE		*global_problem_logf = global_ctx->problem_logf;
-	struct dir_info_db *dir_info = global_ctx->dir_info;
-	struct dx_dir_info *dx_dir_info = global_ctx->dx_dir_info;
-	ext2fs_inode_bitmap inode_used_map = global_ctx->inode_used_map;
-	ext2fs_inode_bitmap inode_dir_map = global_ctx->inode_dir_map;
-	ext2fs_inode_bitmap inode_bb_map = global_ctx->inode_bb_map;
-	ext2fs_inode_bitmap inode_imagic_map = global_ctx->inode_imagic_map;
-	ext2fs_inode_bitmap inode_reg_map = global_ctx->inode_reg_map;
-	ext2fs_block_bitmap inodes_to_rebuild = global_ctx->inodes_to_rebuild;
-	ext2fs_inode_bitmap inode_bad_map = global_ctx->inode_bad_map;
-	ext2_icount_t inode_count = global_ctx->inode_count;
-	ext2_icount_t inode_link_info = global_ctx->inode_link_info;
-	__u32	fs_directory_count = global_ctx->fs_directory_count;
-	__u32	fs_regular_count = global_ctx->fs_regular_count;
-	__u32	fs_blockdev_count = global_ctx->fs_blockdev_count;
-	__u32	fs_chardev_count = global_ctx->fs_chardev_count;
-	__u32	fs_links_count = global_ctx->fs_links_count;
-	__u32	fs_symlinks_count = global_ctx->fs_symlinks_count;
-	__u32	fs_fast_symlinks_count = global_ctx->fs_fast_symlinks_count;
-	__u32	fs_fifo_count = global_ctx->fs_fifo_count;
-	__u32	fs_total_count = global_ctx->fs_total_count;
-	__u32	fs_badblocks_count = global_ctx->fs_badblocks_count;
-	__u32	fs_sockets_count = global_ctx->fs_sockets_count;
-	__u32	fs_ind_count = global_ctx->fs_ind_count;
-	__u32	fs_dind_count = global_ctx->fs_dind_count;
-	__u32	fs_tind_count = global_ctx->fs_tind_count;
-	__u32	fs_fragmented = global_ctx->fs_fragmented;
-	__u32	fs_fragmented_dir = global_ctx->fs_fragmented_dir;
-	__u32	large_files = global_ctx->large_files;
-	int dx_dir_info_size = global_ctx->dx_dir_info_size;
-	int dx_dir_info_count = global_ctx->dx_dir_info_count;
-	ext2_u32_list dirs_to_hash = global_ctx->dirs_to_hash;
-	quota_ctx_t qctx = global_ctx->qctx;
-	int *invalid_block_bitmap_flag = global_ctx->invalid_block_bitmap_flag;
-	int *invalid_inode_bitmap_flag = global_ctx->invalid_inode_bitmap_flag;
-	int *invalid_inode_table_flag  = global_ctx->invalid_inode_table_flag;
-	int invalid_bitmaps = global_ctx->invalid_bitmaps;
-	ext2_refcount_t refcount = global_ctx->refcount;
-	ext2_refcount_t refcount_extra = global_ctx->refcount_extra;
-	ext2_refcount_t refcount_orig = global_ctx->refcount_orig;
-	ext2_refcount_t ea_block_quota_blocks = global_ctx->ea_block_quota_blocks;
-	ext2_refcount_t ea_block_quota_inodes = global_ctx->ea_block_quota_inodes;
-	ext2fs_block_bitmap block_ea_map = global_ctx->block_ea_map;
-	ext2_refcount_t ea_inode_refs = global_ctx->ea_inode_refs;
-	ext2fs_block_bitmap  block_found_map = global_ctx->block_found_map;
-	ext2fs_block_bitmap  block_dup_map = global_ctx->block_dup_map;
-	struct encrypted_file_info *dest_info = global_ctx->encrypted_files;
+	int i;
 
-#ifdef HAVE_SETJMP_H
-	jmp_buf		 old_jmp;
+	global_ctx->fs_directory_count += thread_ctx->fs_directory_count;
+	global_ctx->fs_regular_count += thread_ctx->fs_regular_count;
+	global_ctx->fs_blockdev_count += thread_ctx->fs_blockdev_count;
+	global_ctx->fs_chardev_count += thread_ctx->fs_chardev_count;
+	global_ctx->fs_links_count += thread_ctx->fs_links_count;
+	global_ctx->fs_symlinks_count += thread_ctx->fs_symlinks_count;
+	global_ctx->fs_fast_symlinks_count += thread_ctx->fs_fast_symlinks_count;
+	global_ctx->fs_fifo_count += thread_ctx->fs_fifo_count;
+	global_ctx->fs_total_count += thread_ctx->fs_total_count;
+	global_ctx->fs_badblocks_count += thread_ctx->fs_badblocks_count;
+	global_ctx->fs_sockets_count += thread_ctx->fs_sockets_count;
+	global_ctx->fs_ind_count += thread_ctx->fs_ind_count;
+	global_ctx->fs_dind_count += thread_ctx->fs_dind_count;
+	global_ctx->fs_tind_count += thread_ctx->fs_tind_count;
+	global_ctx->fs_fragmented += thread_ctx->fs_fragmented;
+	global_ctx->fs_fragmented_dir += thread_ctx->fs_fragmented_dir;
+	global_ctx->large_files += thread_ctx->large_files;
+	global_ctx->flags |= thread_ctx->flags;
+	/* threads might enable E2F_OPT_YES */
+	global_ctx->options |= thread_ctx->options;
 
-	memcpy(old_jmp, global_ctx->abort_loc, sizeof(jmp_buf));
-#endif
-	memcpy(global_ctx, thread_ctx, sizeof(struct e2fsck_struct));
-#ifdef HAVE_SETJMP_H
-	memcpy(global_ctx->abort_loc, old_jmp, sizeof(jmp_buf));
-#endif
+	/* merge extent depth count */
+	for (i = 0; i < MAX_EXTENT_DEPTH_COUNT; i++)
+		global_ctx->extent_depth_count[i] +=
+			thread_ctx->extent_depth_count[i];
 
-	global_ctx->inode_used_map = inode_used_map;
-	global_ctx->inode_dir_map = inode_dir_map;
-	global_ctx->inode_bb_map = inode_bb_map;
-	global_ctx->inode_imagic_map = inode_imagic_map;
-	global_ctx->inodes_to_rebuild = inodes_to_rebuild;
-	global_ctx->inode_reg_map = inode_reg_map;
-	global_ctx->block_dup_map = block_dup_map;
-	global_ctx->block_found_map = block_found_map;
-	global_ctx->inode_bad_map = inode_bad_map;
-	global_ctx->dir_info = dir_info;
-	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
-	global_ctx->dx_dir_info = dx_dir_info;
-	global_ctx->dx_dir_info_count = dx_dir_info_count;
-	global_ctx->dx_dir_info_size = dx_dir_info_size;
-	e2fsck_pass1_merge_dx_dir(global_ctx, thread_ctx);
-	global_ctx->inode_count = inode_count;
-	global_ctx->inode_link_info = inode_link_info;
-	global_ctx->refcount = refcount;
-	global_ctx->refcount_extra = refcount_extra;
-	global_ctx->refcount_orig = refcount_orig;
-	global_ctx->ea_block_quota_blocks = ea_block_quota_blocks;
-	global_ctx->ea_block_quota_inodes = ea_block_quota_inodes;
-	global_ctx->block_ea_map = block_ea_map;
-	global_ctx->ea_inode_refs = ea_inode_refs;
-	global_ctx->encrypted_files = dest_info;
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_directory_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_regular_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_blockdev_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_chardev_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_links_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_symlinks_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fast_symlinks_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fifo_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_total_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_badblocks_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_sockets_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_ind_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_dind_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_tind_count);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fragmented);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fragmented_dir);
-	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, large_files);
-
-	global_ctx->flags |= flags;
-
-	retval = e2fsck_pass1_merge_fs(global_fs, thread_fs);
+ 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
+ 	e2fsck_pass1_merge_dx_dir(global_ctx, thread_ctx);
+	retval = e2fsck_pass1_merge_fs(global_ctx->fs, thread_ctx->fs);
 	if (retval) {
 		com_err(global_ctx->program_name, 0, _("while merging fs\n"));
 		return retval;
 	}
-	global_fs->priv_data = global_ctx;
-	global_ctx->fs = global_fs;
-	global_ctx->logf = global_logf;
-	global_ctx->problem_logf = global_problem_logf;
-	global_ctx->global_ctx = NULL;
 	retval = e2fsck_pass1_merge_icounts(global_ctx, thread_ctx);
 	if (retval) {
 		com_err(global_ctx->program_name, 0,
 			_("while merging icounts\n"));
 		return retval;
 	}
-	global_ctx->dirs_to_hash = dirs_to_hash;
 	retval = e2fsck_pass1_merge_dirs_to_hash(global_ctx, thread_ctx);
 	if (retval) {
 		com_err(global_ctx->program_name, 0, _("while merging dirs to hash\n"));
@@ -3097,19 +3012,14 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	}
 	e2fsck_pass1_merge_ea_inode_refs(global_ctx, thread_ctx);
 	e2fsck_pass1_merge_ea_refcount(global_ctx, thread_ctx);
-	global_ctx->qctx = qctx;
 	e2fsck_pass1_merge_quota_ctx(global_ctx, thread_ctx);
+	e2fsck_pass1_merge_invalid_bitmaps(global_ctx, thread_ctx);
 	retval = merge_two_encrypted_files(thread_ctx, global_ctx);
 	if (retval) {
 		com_err(global_ctx->program_name, 0,
 			_("while merging encrypted dirs\n"));
 		return retval;
 	}
-	global_ctx->invalid_block_bitmap_flag = invalid_block_bitmap_flag;
-	global_ctx->invalid_inode_bitmap_flag = invalid_inode_bitmap_flag;
-	global_ctx->invalid_inode_table_flag = invalid_inode_table_flag;
-	global_ctx->invalid_bitmaps = invalid_bitmaps;
-	e2fsck_pass1_merge_invalid_bitmaps(global_ctx, thread_ctx);
 
 	/*
 	 * PASS1_COPY_CTX_BITMAP might return directly from this function,
@@ -3145,7 +3055,7 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
 	errcode_t	retval;
 
-	retval = e2fsck_pass1_thread_join_one(global_ctx, thread_ctx);
+	retval = e2fsck_pass1_merge_context(global_ctx, thread_ctx);
 	ext2fs_free_mem(&thread_ctx->fs);
 	if (thread_ctx->logf)
 		fclose(thread_ctx->logf);
