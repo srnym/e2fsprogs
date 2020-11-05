@@ -445,6 +445,17 @@ struct e2fsck_struct {
 	__u32 extent_depth_count[MAX_EXTENT_DEPTH_COUNT];
 };
 
+#ifdef DEBUG_THREADS
+/*
+ * Enabling DEBUG_THREADS would cause the parall fsck threads run sequentially
+ */
+struct e2fsck_thread_debug {
+	pthread_mutex_t	etd_mutex;
+	pthread_cond_t	etd_cond;
+	int		etd_finished_threads;
+};
+#endif
+
 struct e2fsck_thread_info {
 	/* ID returned by pthread_create() */
 	pthread_t		 eti_thread_id;
@@ -454,6 +465,9 @@ struct e2fsck_thread_info {
 	int			 eti_started;
 	/* Context used for this thread */
 	e2fsck_t		 eti_thread_ctx;
+#ifdef DEBUG_THREADS
+	struct e2fsck_thread_debug	*eti_debug;
+#endif
 };
 
 /* Data structures to evaluate whether an extent tree needs rebuilding. */
