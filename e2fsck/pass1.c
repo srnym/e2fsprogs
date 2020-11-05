@@ -1701,8 +1701,13 @@ void _e2fsck_pass1(e2fsck_t ctx)
 
 	while (1) {
 		e2fsck_pass1_check_lock(ctx);
-		if (ino % (fs->super->s_inodes_per_group * 4) == 1) {
-			if (e2fsck_mmp_update(fs))
+		/* MMP block is only checked and update in one thread*/
+		if (ino % (fs->super->s_inodes_per_group * 4) == 1 &&
+		    (!ctx->global_ctx || !ctx->thread_info.et_thread_index)) {
+			ext2_filsys global_fs = ctx->global_ctx ?
+					ctx->global_ctx->fs : ctx->fs;
+
+			if (e2fsck_mmp_update(global_fs))
 				fatal_error(ctx, 0);
 		}
 		old_op = ehandler_operation(eop_next_inode);
