@@ -2160,6 +2160,11 @@ do {									\
     }									\
 } while (0)
 
+#define PASS1_MERGE_CTX_COUNT(_dest, _src, _field)			\
+do {									\
+    _dest->_field = _field + _src->_field;				\
+} while (0)
+
 static errcode_t pass1_open_io_channel(ext2_filsys fs,
 				       const char *io_options,
 				       io_manager manager, int flags)
@@ -2469,6 +2474,23 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	ext2fs_block_bitmap inodes_to_rebuild = global_ctx->inodes_to_rebuild;
 	ext2_icount_t inode_count = global_ctx->inode_count;
 	ext2_icount_t inode_link_info = global_ctx->inode_link_info;
+	__u32	fs_directory_count = global_ctx->fs_directory_count;
+	__u32	fs_regular_count = global_ctx->fs_regular_count;
+	__u32	fs_blockdev_count = global_ctx->fs_blockdev_count;
+	__u32	fs_chardev_count = global_ctx->fs_chardev_count;
+	__u32	fs_links_count = global_ctx->fs_links_count;
+	__u32	fs_symlinks_count = global_ctx->fs_symlinks_count;
+	__u32	fs_fast_symlinks_count = global_ctx->fs_fast_symlinks_count;
+	__u32	fs_fifo_count = global_ctx->fs_fifo_count;
+	__u32	fs_total_count = global_ctx->fs_total_count;
+	__u32	fs_badblocks_count = global_ctx->fs_badblocks_count;
+	__u32	fs_sockets_count = global_ctx->fs_sockets_count;
+	__u32	fs_ind_count = global_ctx->fs_ind_count;
+	__u32	fs_dind_count = global_ctx->fs_dind_count;
+	__u32	fs_tind_count = global_ctx->fs_tind_count;
+	__u32	fs_fragmented = global_ctx->fs_fragmented;
+	__u32	fs_fragmented_dir = global_ctx->fs_fragmented_dir;
+	__u32	large_files = global_ctx->large_files;
 
 #ifdef HAVE_SETJMP_H
 	jmp_buf		 old_jmp;
@@ -2494,6 +2516,23 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
 	global_ctx->inode_count = inode_count;
 	global_ctx->inode_link_info = inode_link_info;
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_directory_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_regular_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_blockdev_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_chardev_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_links_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_symlinks_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fast_symlinks_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fifo_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_total_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_badblocks_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_sockets_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_ind_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_dind_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_tind_count);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fragmented);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_fragmented_dir);
+	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, large_files);
 
 	/* Keep the global singal flags*/
 	global_ctx->flags |= (flags & E2F_FLAG_SIGNAL_MASK) |
