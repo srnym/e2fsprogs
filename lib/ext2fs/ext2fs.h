@@ -837,6 +837,8 @@ extern void ext2fs_free_block_bitmap(ext2fs_block_bitmap bitmap);
 extern void ext2fs_free_inode_bitmap(ext2fs_inode_bitmap bitmap);
 extern errcode_t ext2fs_copy_bitmap(ext2fs_generic_bitmap src,
 				    ext2fs_generic_bitmap *dest);
+errcode_t ext2fs_merge_bitmap(ext2fs_generic_bitmap src,
+			      ext2fs_generic_bitmap dest);
 extern errcode_t ext2fs_write_inode_bitmap(ext2_filsys fs);
 extern errcode_t ext2fs_write_block_bitmap (ext2_filsys fs);
 extern errcode_t ext2fs_read_inode_bitmap (ext2_filsys fs);
@@ -1433,6 +1435,8 @@ void ext2fs_set_generic_bmap_padding(ext2fs_generic_bitmap bmap);
 errcode_t ext2fs_resize_generic_bmap(ext2fs_generic_bitmap bmap,
 				     __u64 new_end,
 				     __u64 new_real_end);
+errcode_t ext2fs_merge_generic_bmap(ext2fs_generic_bitmap gen_src,
+                                    ext2fs_generic_bitmap gen_dest);
 errcode_t ext2fs_compare_generic_bmap(errcode_t neq,
 				      ext2fs_generic_bitmap bm1,
 				      ext2fs_generic_bitmap bm2);
