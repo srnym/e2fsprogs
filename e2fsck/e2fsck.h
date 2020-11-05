@@ -239,6 +239,10 @@ struct e2fsck_thread {
 	dgrp_t		et_group_next;
 	/* Thread index */
 	int		et_thread_index;
+	/* Scanned inode number */
+	ext2_ino_t	et_inode_number;
+	char		et_log_buf[2048];
+	char		et_log_length;
 };
 
 struct e2fsck_struct {
