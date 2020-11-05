@@ -1394,6 +1394,37 @@ err:
 	return retval;
 }
 
+/**
+ * Even though we could specify number of threads,
+ * but it might be more than the whole filesystem
+ * block groups, correct it here.
+ */
+static void set_thread_num(e2fsck_t ctx)
+{
+	unsigned flexbg_size = 1;
+	ext2_filsys fs = ctx->fs;
+	int num_threads = ctx->fs_num_threads;
+	int max_threads;
+
+	if (num_threads < 1)
+		num_threads = 1;
+
+	if (ext2fs_has_feature_flex_bg(fs->super))
+		flexbg_size = 1 << fs->super->s_log_groups_per_flex;
+
+	max_threads = fs->group_desc_count / flexbg_size;
+	if (max_threads == 0)
+		max_threads = 1;
+
+	if (num_threads > max_threads) {
+		num_threads = max_threads;
+		fprintf(stdout, "Use %d threads to align flex_bg for better performance\n",
+				num_threads);
+	}
+	ctx->fs_num_threads = num_threads;
+	ctx->fs->fs_num_threads = num_threads;
+}
+
 int main (int argc, char *argv[])
 {
 	errcode_t	retval = 0, retval2 = 0, orig_retval = 0;
@@ -1704,6 +1735,8 @@ failure:
 
 	ctx->fs = fs;
 	fs->now = ctx->now;
+	/* set the fs_thread count for cases*/
+	set_thread_num(ctx);
 	sb = fs->super;
 
 	if (sb->s_rev_level > E2FSCK_CURRENT_REV) {

@@ -1284,37 +1284,6 @@ static int e2fsck_should_abort(e2fsck_t ctx)
 	return 0;
 }
 
-/**
- * Even though we could specify number of threads,
- * but it might be more than the whole filesystem
- * block groups, correct it here.
- */
-static void e2fsck_pass1_set_thread_num(e2fsck_t ctx)
-{
-	unsigned flexbg_size = 1;
-	ext2_filsys fs = ctx->fs;
-	int num_threads = ctx->fs_num_threads;
-	int max_threads;
-
-	if (num_threads < 1)
-		num_threads = 1;
-
-	if (ext2fs_has_feature_flex_bg(fs->super))
-		flexbg_size = 1 << fs->super->s_log_groups_per_flex;
-
-	max_threads = fs->group_desc_count / flexbg_size;
-	if (max_threads == 0)
-		max_threads = 1;
-
-	if (num_threads > max_threads) {
-		num_threads = max_threads;
-		fprintf(stdout, "Use %d threads to align flex_bg for better performance\n",
-				num_threads);
-	}
-	ctx->fs_num_threads = num_threads;
-	ctx->fs->fs_num_threads = num_threads;
-}
-
 static void init_ext2_max_sizes()
 {
 	int	i;
@@ -1348,7 +1317,7 @@ static int _e2fsck_pass1_prepare(e2fsck_t ctx)
 	unsigned long long readahead_kb;
 
 	init_ext2_max_sizes();
-	e2fsck_pass1_set_thread_num(ctx);
+	//e2fsck_pass1_set_thread_num(ctx);
 	/* If we can do readahead, figure out how many groups to pull in. */
 	if (!e2fsck_can_readahead(ctx->fs))
 		ctx->readahead_kb = 0;
