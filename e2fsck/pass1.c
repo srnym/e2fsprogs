@@ -2511,6 +2511,7 @@ static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, e2fsck_t src_context,
 	dest->inode_map = NULL;
 	dest->block_map = NULL;
 	dest->badblocks = NULL;
+	dest->icache = NULL;
 
 	/*
 	 * PASS1_COPY_FS_BITMAP might return directly from this function,
@@ -2518,13 +2519,6 @@ static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, e2fsck_t src_context,
 	 */
 	PASS1_COPY_FS_BITMAP(dest, src, inode_map);
 	PASS1_COPY_FS_BITMAP(dest, src, block_map);
-
-	/* icache will be rebuilt if needed, so do not copy from @src */
-	if (src->icache) {
-		ext2fs_free_inode_cache(src->icache);
-		src->icache = NULL;
-	}
-	dest->icache = NULL;
 
 	if (src->dblist) {
 		retval = ext2fs_copy_dblist(src->dblist, &dest->dblist);
@@ -2565,6 +2559,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	ext2_dblist dblist;
 	int flags;
 	e2fsck_t dest_ctx = dest->priv_data;
+	struct ext2_inode_cache *icache = dest->icache;
 
 	dest_io = dest->io;
 	dest_image_io = dest->image_io;
@@ -2582,6 +2577,7 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	dest->dblist = dblist;
 	dest->priv_data = dest_ctx;
 	dest->flags = src->flags | flags;
+	dest->icache = icache;
 	if (!(src->flags & EXT2_FLAG_VALID) || !(flags & EXT2_FLAG_VALID))
 		ext2fs_unmark_valid(dest);
 	/*
@@ -2627,17 +2623,15 @@ static int e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 
 	retval = _e2fsck_pass1_merge_fs(dest, src);
 
-	if (src->inode_map)
-		ext2fs_free_generic_bmap(src->inode_map);
-	if (src->block_map)
-		ext2fs_free_generic_bmap(src->block_map);
-
-	/* icache will be rebuilt if needed, so do not copy from @src */
 	if (src->icache) {
 		ext2fs_free_inode_cache(src->icache);
 		src->icache = NULL;
 	}
-	dest->icache = NULL;
+
+	if (src->inode_map)
+		ext2fs_free_generic_bmap(src->inode_map);
+	if (src->block_map)
+		ext2fs_free_generic_bmap(src->block_map);
 
 	if (src->dblist) {
 		ext2fs_free_dblist(src->dblist);
