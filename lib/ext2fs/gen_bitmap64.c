@@ -86,7 +86,6 @@ static void warn_bitmap(ext2fs_generic_bitmap_64 bitmap,
 #define INC_STAT(map, name) ;;
 #endif
 
-
 errcode_t ext2fs_alloc_generic_bmap(ext2_filsys fs, errcode_t magic,
 				    int type, __u64 start, __u64 end,
 				    __u64 real_end,
@@ -109,11 +108,7 @@ errcode_t ext2fs_alloc_generic_bmap(ext2_filsys fs, errcode_t magic,
 		ops = &ext2fs_blkmap64_rbtree;
 		break;
 	case EXT2FS_BMAP64_AUTODIR:
-		retval = ext2fs_get_num_dirs(fs, &num_dirs);
-		if (retval || num_dirs > (fs->super->s_inodes_count / 320))
-			ops = &ext2fs_blkmap64_bitarray;
-		else
-			ops = &ext2fs_blkmap64_rbtree;
+		ops = &ext2fs_blkmap64_rbtree;
 		break;
 	default:
 		return EINVAL;
