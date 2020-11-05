@@ -2436,6 +2436,24 @@ static void e2fsck_pass1_merge_dir_info(e2fsck_t global_ctx, e2fsck_t thread_ctx
 			      global_ctx->dir_info);
 }
 
+static void e2fsck_pass1_merge_dx_dir(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+{
+	if (thread_ctx->dx_dir_info == NULL)
+		return;
+
+	if (global_ctx->dx_dir_info == NULL) {
+		/* TODO: tdb needs to be handled properly */
+		global_ctx->dx_dir_info = thread_ctx->dx_dir_info;
+		global_ctx->dx_dir_info_size = thread_ctx->dx_dir_info_size;
+		global_ctx->dx_dir_info_count = thread_ctx->dx_dir_info_count;
+		thread_ctx->dx_dir_info = NULL;
+		return;
+	}
+
+	e2fsck_merge_dx_dir(global_ctx, thread_ctx);
+}
+
+
 #define PASS1_MERGE_CTX_ICOUNT(_dest, _src, _field)			\
 do {									\
     if (_src->_field) {							\
@@ -2467,6 +2485,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	FILE		*global_logf = global_ctx->logf;
 	FILE		*global_problem_logf = global_ctx->problem_logf;
 	struct dir_info_db *dir_info = global_ctx->dir_info;
+	struct dx_dir_info *dx_dir_info = global_ctx->dx_dir_info;
 	ext2fs_inode_bitmap inode_used_map = global_ctx->inode_used_map;
 	ext2fs_inode_bitmap inode_dir_map = global_ctx->inode_dir_map;
 	ext2fs_inode_bitmap inode_bb_map = global_ctx->inode_bb_map;
@@ -2496,6 +2515,8 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	__u32	fs_fragmented = global_ctx->fs_fragmented;
 	__u32	fs_fragmented_dir = global_ctx->fs_fragmented_dir;
 	__u32	large_files = global_ctx->large_files;
+	int dx_dir_info_size = global_ctx->dx_dir_info_size;
+	int dx_dir_info_count = global_ctx->dx_dir_info_count;
 
 #ifdef HAVE_SETJMP_H
 	jmp_buf		 old_jmp;
@@ -2519,6 +2540,10 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	global_ctx->block_metadata_map = block_metadata_map;
 	global_ctx->dir_info = dir_info;
 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
+	global_ctx->dx_dir_info = dx_dir_info;
+	global_ctx->dx_dir_info_count = dx_dir_info_count;
+	global_ctx->dx_dir_info_size = dx_dir_info_size;
+	e2fsck_pass1_merge_dx_dir(global_ctx, thread_ctx);
 	global_ctx->inode_count = inode_count;
 	global_ctx->inode_link_info = inode_link_info;
 	PASS1_MERGE_CTX_COUNT(global_ctx, thread_ctx, fs_directory_count);
