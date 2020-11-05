@@ -554,10 +554,7 @@ static errcode_t read_bitmaps(ext2_filsys fs, int do_inode, int do_block)
 	if (!thread_infos)
 		goto out;
 
-	average_group = fs->group_desc_count / num_threads;
-	if (average_group == 0)
-		average_group = 1;
-
+	average_group = ext2fs_get_avg_group(fs);
 	retval = read_bitmaps_range_prepare(fs, do_inode, do_block);
 	if (retval)
 		goto out;
