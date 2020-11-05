@@ -107,6 +107,12 @@ if test "$GCC" = yes; then
 fi
 AC_PROG_CPP
 dnl
+dnl Add pthread to the CFLAGS/LDFLAGS
+dnl
+CFLAGS="$CFLAGS -pthread"
+LDFLAGS="$CFLAGS -pthread"
+LDFLAGS_STATIC="$LDFLAGS_STATIC -pthread"
+dnl
 dnl Alpha computers use fast and imprecise floating point code that may
 dnl miss exceptions by default. Force sane options if we're using GCC.
 AC_MSG_CHECKING(for additional special compiler flags)
