@@ -360,7 +360,7 @@ struct e2fsck_struct {
 
 	ext2_refcount_t	refcount;
 	ext2_refcount_t refcount_extra;
-
+	ext2_refcount_t	refcount_orig;
 	/*
 	 * Quota blocks and inodes to be charged for each ea block.
 	 */
@@ -449,8 +449,6 @@ struct e2fsck_struct {
 	pthread_mutex_t		 fs_fix_mutex;
 	/* protect block_found_map, block_dup_map */
 	pthread_rwlock_t	 fs_block_map_rwlock;
-	/* protect ea related structure */
-	pthread_mutex_t		 fs_ea_mutex;
 };
 
 #ifdef DEBUG_THREADS

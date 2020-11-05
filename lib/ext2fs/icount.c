@@ -786,13 +786,14 @@ errcode_t ext2fs_icount_merge(ext2_icount_t src, ext2_icount_t dest)
 		return ext2fs_icount_merge_full_map(src, dest);
 
 	retval = ext2fs_merge_bitmap(src->single,
-				     dest->single, NULL);
+				     dest->single, NULL, NULL);
 	if (retval)
 		return retval;
 
 	if (src->multiple) {
 		retval = ext2fs_merge_bitmap(src->multiple,
-					     dest->multiple, NULL);
+					     dest->multiple, NULL,
+					     NULL);
 		if (retval)
 			return retval;
 	}

@@ -48,9 +48,11 @@ errcode_t ext2fs_copy_bitmap(ext2fs_generic_bitmap src,
 
 errcode_t ext2fs_merge_bitmap(ext2fs_generic_bitmap src,
 			      ext2fs_generic_bitmap dest,
-			      ext2fs_generic_bitmap dup)
+			      ext2fs_generic_bitmap dup,
+			      ext2fs_generic_bitmap dup_allowed)
 {
-	return ext2fs_merge_generic_bmap(src, dest, dup);
+	return ext2fs_merge_generic_bmap(src, dest, dup,
+					 dup_allowed);
 }
 
 void ext2fs_set_bitmap_padding(ext2fs_generic_bitmap map)

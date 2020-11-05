@@ -970,7 +970,8 @@ static void rb_print_stats(ext2fs_generic_bitmap_64 bitmap EXT2FS_ATTR((unused))
 
 static errcode_t rb_merge_bmap(ext2fs_generic_bitmap_64 src,
 			       ext2fs_generic_bitmap_64 dest,
-			       ext2fs_generic_bitmap_64 dup)
+			       ext2fs_generic_bitmap_64 dup,
+			       ext2fs_generic_bitmap_64 dup_allowed)
 {
 	struct ext2fs_rb_private *src_bp, *dest_bp, *dup_bp = NULL;
 	struct bmap_rb_extent *src_ext;
@@ -1004,9 +1005,20 @@ static errcode_t rb_merge_bmap(ext2fs_generic_bitmap_64 src,
 				if (retval) {
 					rb_insert_extent(i, 1, dest_bp);
 				} else {
-					if (dup_bp)
-						rb_insert_extent(i, 1, dup_bp);
-					dup_found = 1;
+					if (dup_allowed) {
+						retval = rb_test_clear_bmap_extent(dup_allowed,
+									i + src->start, 1);
+						/* not existed in dup_allowed */
+						if (retval) {
+							dup_found = 1;
+							if (dup_bp)
+								rb_insert_extent(i, 1, dup_bp);
+						} /* else we conside it not duplicated */
+					} else {
+						if (dup_bp)
+							rb_insert_extent(i, 1, dup_bp);
+						dup_found = 1;
+					}
 				}
 			}
 		}

@@ -179,18 +179,6 @@ static inline void e2fsck_pass1_block_map_r_unlock(e2fsck_t ctx)
 	pthread_rwlock_unlock(&global_ctx->fs_block_map_rwlock);
 }
 
-static inline void e2fsck_pass1_ea_lock(e2fsck_t ctx)
-{
-	e2fsck_get_lock_context(ctx);
-	pthread_mutex_lock(&global_ctx->fs_ea_mutex);
-}
-
-static inline void e2fsck_pass1_ea_unlock(e2fsck_t ctx)
-{
-	e2fsck_get_lock_context(ctx);
-	pthread_mutex_unlock(&global_ctx->fs_ea_mutex);
-}
-
 /*
  * Check to make sure a device inode is real.  Returns 1 if the device
  * checks out, 0 if not.
@@ -459,16 +447,15 @@ static void inc_ea_inode_refs(e2fsck_t ctx, struct problem_context *pctx,
 			      struct ext2_ext_attr_entry *first, void *end)
 {
 	struct ext2_ext_attr_entry *entry;
-	e2fsck_t global_ctx = ctx->global_ctx ? ctx->global_ctx : ctx;
 
 	for (entry = first;
 	     (void *)entry < end && !EXT2_EXT_IS_LAST_ENTRY(entry);
 	     entry = EXT2_EXT_ATTR_NEXT(entry)) {
 		if (!entry->e_value_inum)
 			continue;
-		if (!global_ctx->ea_inode_refs) {
+		if (!ctx->ea_inode_refs) {
 			pctx->errcode = ea_refcount_create(0,
-						&global_ctx->ea_inode_refs);
+						&ctx->ea_inode_refs);
 			if (pctx->errcode) {
 				pctx->num = 4;
 				fix_problem(ctx, PR_1_ALLOCATE_REFCOUNT, pctx);
@@ -476,7 +463,7 @@ static void inc_ea_inode_refs(e2fsck_t ctx, struct problem_context *pctx,
 				return;
 			}
 		}
-		ea_refcount_increment(global_ctx->ea_inode_refs,
+		ea_refcount_increment(ctx->ea_inode_refs,
 				      entry->e_value_inum, 0);
 	}
 }
@@ -603,10 +590,8 @@ fix:
 	 * EA(s) in automatic fashion -bzzz
 	 */
 	if (problem == 0 || !fix_problem(ctx, problem, pctx)) {
-		e2fsck_pass1_ea_lock(ctx);
 		inc_ea_inode_refs(ctx, pctx,
 				  (struct ext2_ext_attr_entry *)start, end);
-		e2fsck_pass1_ea_unlock(ctx);
 		return;
 	}
 
@@ -2369,7 +2354,8 @@ do {									\
 			_src->_map_field = NULL;			\
 		} else {						\
 			_ret = ext2fs_merge_bitmap(_src->_map_field,	\
-						   _dest->_map_field, NULL);\
+						   _dest->_map_field, NULL,\
+						   NULL);		\
 			if (_ret)					\
 				return _ret;				\
 		}							\
@@ -2386,7 +2372,8 @@ do {									\
 			_src->_map_field = NULL;			\
 		} else {						\
 			_ret = ext2fs_merge_bitmap(_src->_map_field,	\
-						   _dest->_map_field, NULL);\
+						   _dest->_map_field, NULL,\
+						   NULL);		\
 			if (_ret)					\
 				return _ret;				\
 		}							\
@@ -2825,6 +2812,157 @@ static void e2fsck_pass1_merge_quota_ctx(e2fsck_t global_ctx, e2fsck_t thread_ct
 	quota_release_context(&thread_ctx->qctx);
 }
 
+static errcode_t e2fsck_pass1_merge_ea_inode_refs(e2fsck_t global_ctx,
+						  e2fsck_t thread_ctx)
+{
+	ea_value_t count;
+	blk64_t blk;
+	errcode_t retval;
+
+	if (!thread_ctx->ea_inode_refs)
+		return 0;
+
+	if (!global_ctx->ea_inode_refs) {
+		global_ctx->ea_inode_refs = thread_ctx->ea_inode_refs;
+		thread_ctx->ea_inode_refs = NULL;
+		return 0;
+	}
+
+	ea_refcount_intr_begin(thread_ctx->ea_inode_refs);
+	while (1) {
+		if ((blk = ea_refcount_intr_next(thread_ctx->ea_inode_refs,
+						 &count)) == 0)
+			break;
+		if (!global_ctx->block_ea_map ||
+		    !ext2fs_fast_test_block_bitmap2(global_ctx->block_ea_map,
+						    blk)) {
+			retval = ea_refcount_store(global_ctx->ea_inode_refs,
+						   blk, count);
+			if (retval)
+				return retval;
+		}
+	}
+
+	return retval;
+}
+
+static ea_value_t ea_refcount_usage(e2fsck_t ctx, blk64_t blk,
+				    ea_value_t *orig)
+{
+	ea_value_t count_cur;
+	ea_value_t count_extra = 0;
+	ea_value_t count_orig;
+
+	ea_refcount_fetch(ctx->refcount_orig, blk, &count_orig);
+	ea_refcount_fetch(ctx->refcount, blk, &count_cur);
+	/* most of time this is not needed */
+	if (ctx->refcount_extra && count_cur == 0)
+		ea_refcount_fetch(ctx->refcount_extra, blk, &count_extra);
+
+	if (!count_orig)
+		count_orig = *orig;
+	else if (orig)
+		*orig = count_orig;
+
+	return count_orig + count_extra - count_cur;
+}
+
+static errcode_t e2fsck_pass1_merge_ea_refcount(e2fsck_t global_ctx,
+						e2fsck_t thread_ctx)
+{
+	ea_value_t count;
+	blk64_t blk;
+	errcode_t retval = 0;
+
+	if (!thread_ctx->refcount)
+		return 0;
+
+	if (!global_ctx->refcount) {
+		global_ctx->refcount = thread_ctx->refcount;
+		thread_ctx->refcount = NULL;
+		global_ctx->refcount_extra = thread_ctx->refcount;
+		thread_ctx->refcount_extra = NULL;
+		return 0;
+	}
+
+	ea_refcount_intr_begin(thread_ctx->refcount);
+	while (1) {
+		if ((blk = ea_refcount_intr_next(thread_ctx->refcount,
+						 &count)) == 0)
+			break;
+		/**
+		 * this EA has never seen before, so just store its
+		 * refcount and refcount_extra into global_ctx if needed.
+		 */
+		if (!global_ctx->block_ea_map ||
+		    !ext2fs_fast_test_block_bitmap2(global_ctx->block_ea_map,
+						    blk)) {
+			ea_value_t extra;
+
+			retval = ea_refcount_store(global_ctx->refcount,
+						   blk, count);
+			if (retval)
+				return retval;
+
+			if (count > 0 || !thread_ctx->refcount_extra)
+				continue;
+			ea_refcount_fetch(thread_ctx->refcount_extra, blk,
+					  &extra);
+			if (extra == 0)
+				continue;
+
+			if (!global_ctx->refcount_extra) {
+				retval = ea_refcount_create(0,
+					&global_ctx->refcount_extra);
+				if (retval)
+					return retval;
+			}
+			retval = ea_refcount_store(global_ctx->refcount_extra,
+						   blk, extra);
+			if (retval)
+				return retval;
+
+		} else {
+			ea_value_t orig;
+			ea_value_t thread_usage;
+			ea_value_t global_usage;
+			ea_value_t new;
+
+			thread_usage = ea_refcount_usage(thread_ctx,
+							 blk, &orig);
+			global_usage = ea_refcount_usage(global_ctx,
+							 blk, &orig);
+			if (thread_usage + global_usage <= orig) {
+				new = orig - thread_usage - global_usage;
+				retval = ea_refcount_store(global_ctx->refcount,
+							   blk, new);
+				if (retval)
+					return retval;
+				continue;
+			}
+			/* update it is as zero */
+			retval = ea_refcount_store(global_ctx->refcount,
+						   blk, 0);
+			if (retval)
+				return retval;
+			/* Ooops, this EA was referenced more than it stated */
+			if (!global_ctx->refcount_extra) {
+				retval = ea_refcount_create(0,
+						&global_ctx->refcount_extra);
+				if (retval)
+					return retval;
+			}
+			new = global_usage + thread_usage - orig;
+			retval = ea_refcount_store(global_ctx->refcount_extra,
+						   blk, new);
+			if (retval)
+				return retval;
+		}
+	}
+
+	return retval;
+}
+
 static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
 	errcode_t	 retval;
@@ -2870,6 +3008,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	int invalid_bitmaps = global_ctx->invalid_bitmaps;
 	ext2_refcount_t refcount = global_ctx->refcount;
 	ext2_refcount_t refcount_extra = global_ctx->refcount_extra;
+	ext2_refcount_t refcount_orig = global_ctx->refcount_orig;
 	ext2_refcount_t ea_block_quota_blocks = global_ctx->ea_block_quota_blocks;
 	ext2_refcount_t ea_block_quota_inodes = global_ctx->ea_block_quota_inodes;
 	ext2fs_block_bitmap block_ea_map = global_ctx->block_ea_map;
@@ -2905,6 +3044,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	global_ctx->inode_link_info = inode_link_info;
 	global_ctx->refcount = refcount;
 	global_ctx->refcount_extra = refcount_extra;
+	global_ctx->refcount_orig = refcount_orig;
 	global_ctx->ea_block_quota_blocks = ea_block_quota_blocks;
 	global_ctx->ea_block_quota_inodes = ea_block_quota_inodes;
 	global_ctx->block_ea_map = block_ea_map;
@@ -2951,15 +3091,10 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 		com_err(global_ctx->program_name, 0, _("while merging dirs to hash\n"));
 		return retval;
 	}
+	e2fsck_pass1_merge_ea_inode_refs(global_ctx, thread_ctx);
+	e2fsck_pass1_merge_ea_refcount(global_ctx, thread_ctx);
 	global_ctx->qctx = qctx;
 	e2fsck_pass1_merge_quota_ctx(global_ctx, thread_ctx);
-	e2fsck_pass1_block_map_w_lock(thread_ctx);
-	retval = ext2fs_merge_bitmap(thread_ctx->block_found_map,
-				     global_ctx->block_found_map,
-				     global_ctx->block_dup_map);
-	e2fsck_pass1_block_map_w_unlock(thread_ctx);
-	if (retval == EEXIST)
-		global_ctx->flags |= E2F_FLAG_DUP_BLOCK;
 	global_ctx->invalid_block_bitmap_flag = invalid_block_bitmap_flag;
 	global_ctx->invalid_inode_bitmap_flag = invalid_inode_bitmap_flag;
 	global_ctx->invalid_inode_table_flag = invalid_inode_table_flag;
@@ -2976,8 +3111,23 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_imagic_map);
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inode_reg_map);
 	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, inodes_to_rebuild);
+	PASS1_MERGE_CTX_BITMAP(global_ctx, thread_ctx, block_ea_map);
 
-	return 0;
+	/*
+	 * This need be done after merging block_ea_map
+	 * because ea block might be shared, we need exclude
+	 * them from dup blocks.
+	 */
+	retval = ext2fs_merge_bitmap(thread_ctx->block_found_map,
+				     global_ctx->block_found_map,
+				     global_ctx->block_dup_map,
+				     global_ctx->block_ea_map);
+	if (retval == EEXIST) {
+		global_ctx->flags |= E2F_FLAG_DUP_BLOCK;
+		retval = 0;
+	}
+
+	return retval;
 }
 
 static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
@@ -2999,8 +3149,25 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 	PASS1_FREE_CTX_BITMAP(thread_ctx, inode_reg_map);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, inodes_to_rebuild);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_found_map);
+	PASS1_FREE_CTX_BITMAP(thread_ctx, block_ea_map);
 	ext2fs_free_icount(thread_ctx->inode_count);
 	ext2fs_free_icount(thread_ctx->inode_link_info);
+	if (thread_ctx->refcount) {
+		ea_refcount_free(thread_ctx->refcount);
+		thread_ctx->refcount = NULL;
+	}
+	if (thread_ctx->refcount_extra) {
+		ea_refcount_free(thread_ctx->refcount_extra);
+		thread_ctx->refcount_extra = NULL;
+	}
+	if (thread_ctx->ea_inode_refs) {
+		ea_refcount_free(thread_ctx->ea_inode_refs);
+		thread_ctx->ea_inode_refs = NULL;
+	}
+	if (thread_ctx->refcount_orig) {
+		ea_refcount_free(thread_ctx->refcount_orig);
+		thread_ctx->refcount_orig = NULL;
+	}
 	e2fsck_free_dir_info(thread_ctx);
 	ext2fs_free_mem(&thread_ctx);
 
@@ -3182,7 +3349,6 @@ static void e2fsck_pass1_multithread(e2fsck_t global_ctx)
 
 	pthread_mutex_init(&global_ctx->fs_fix_mutex, NULL);
 	pthread_rwlock_init(&global_ctx->fs_block_map_rwlock, NULL);
-	pthread_mutex_init(&global_ctx->fs_ea_mutex, NULL);
 
 	retval = e2fsck_pass1_threads_start(&infos, global_ctx);
 	if (retval) {
@@ -3511,30 +3677,35 @@ static int check_ext_attr(e2fsck_t ctx, struct problem_context *pctx,
 	}
 
 	/* If ea bitmap hasn't been allocated, create it */
-	e2fsck_pass1_ea_lock(ctx);
-	if (!global_ctx->block_ea_map) {
+	if (!ctx->block_ea_map) {
 		pctx->errcode = e2fsck_allocate_block_bitmap(fs,
 					_("ext attr block map"),
 					EXT2FS_BMAP64_RBTREE, "block_ea_map",
-					&global_ctx->block_ea_map);
+					&ctx->block_ea_map);
 		if (pctx->errcode) {
 			pctx->num = 2;
 			fix_problem(ctx, PR_1_ALLOCATE_BBITMAP_ERROR, pctx);
 			ctx->flags |= E2F_FLAG_ABORT;
-			e2fsck_pass1_ea_unlock(ctx);
 			return 0;
 		}
 	}
 
 	/* Create the EA refcount structure if necessary */
-	if (!global_ctx->refcount) {
+	if (!ctx->refcount) {
 		pctx->errcode = ea_refcount_create(0,
-					&global_ctx->refcount);
+					&ctx->refcount);
 		if (pctx->errcode) {
 			pctx->num = 1;
 			fix_problem(ctx, PR_1_ALLOCATE_REFCOUNT, pctx);
 			ctx->flags |= E2F_FLAG_ABORT;
-			e2fsck_pass1_ea_unlock(ctx);
+			return 0;
+		}
+		pctx->errcode = ea_refcount_create(0,
+					&ctx->refcount_orig);
+		if (pctx->errcode) {
+			pctx->num = 1;
+			fix_problem(ctx, PR_1_ALLOCATE_REFCOUNT, pctx);
+			ctx->flags |= E2F_FLAG_ABORT;
 			return 0;
 		}
 	}
@@ -3545,44 +3716,39 @@ static int check_ext_attr(e2fsck_t ctx, struct problem_context *pctx,
 #endif
 
 	/* Have we seen this EA block before? */
-	if (ext2fs_fast_test_block_bitmap2(global_ctx->block_ea_map,
+	if (ext2fs_fast_test_block_bitmap2(ctx->block_ea_map,
 					   blk)) {
 		ea_block_quota->blocks = EXT2FS_C2B(fs, 1);
 		ea_block_quota->inodes = 0;
 
-		if (global_ctx->ea_block_quota_blocks) {
-			ea_refcount_fetch(global_ctx->ea_block_quota_blocks,
+		if (ctx->ea_block_quota_blocks) {
+			ea_refcount_fetch(ctx->ea_block_quota_blocks,
 					  blk, &quota_blocks);
 			if (quota_blocks)
 				ea_block_quota->blocks = quota_blocks;
 		}
 
-		if (global_ctx->ea_block_quota_inodes)
-			ea_refcount_fetch(global_ctx->ea_block_quota_inodes,
+		if (ctx->ea_block_quota_inodes)
+			ea_refcount_fetch(ctx->ea_block_quota_inodes,
 					  blk, &ea_block_quota->inodes);
 
-		if (ea_refcount_decrement(global_ctx->refcount,
-					  blk, 0) == 0) {
-			e2fsck_pass1_ea_unlock(ctx);
+		if (ea_refcount_decrement(ctx->refcount,
+					  blk, 0) == 0)
 			return 1;
-		}
 		/* Ooops, this EA was referenced more than it stated */
-		if (!global_ctx->refcount_extra) {
+		if (!ctx->refcount_extra) {
 			pctx->errcode = ea_refcount_create(0,
-					   &global_ctx->refcount_extra);
+					   &ctx->refcount_extra);
 			if (pctx->errcode) {
 				pctx->num = 2;
 				fix_problem(ctx, PR_1_ALLOCATE_REFCOUNT, pctx);
 				ctx->flags |= E2F_FLAG_ABORT;
-				e2fsck_pass1_ea_unlock(ctx);
 				return 0;
 			}
 		}
-		ea_refcount_increment(global_ctx->refcount_extra, blk, 0);
-		e2fsck_pass1_ea_unlock(ctx);
+		ea_refcount_increment(ctx->refcount_extra, blk, 0);
 		return 1;
 	}
-	e2fsck_pass1_ea_unlock(ctx);
 
 	/*
 	 * OK, we haven't seen this EA block yet.  So we need to
@@ -3709,50 +3875,48 @@ static int check_ext_attr(e2fsck_t ctx, struct problem_context *pctx,
 			return 0;
 	}
 
-	e2fsck_pass1_ea_lock(ctx);
 	if (quota_blocks != EXT2FS_C2B(fs, 1U)) {
-		if (!global_ctx->ea_block_quota_blocks) {
+		if (!ctx->ea_block_quota_blocks) {
 			pctx->errcode = ea_refcount_create(0,
-					&global_ctx->ea_block_quota_blocks);
+					&ctx->ea_block_quota_blocks);
 			if (pctx->errcode) {
 				pctx->num = 3;
 				goto refcount_fail;
 			}
 		}
-		ea_refcount_store(global_ctx->ea_block_quota_blocks,
+		ea_refcount_store(ctx->ea_block_quota_blocks,
 				  blk, quota_blocks);
 	}
 
 	if (quota_inodes) {
-		if (!global_ctx->ea_block_quota_inodes) {
+		if (!ctx->ea_block_quota_inodes) {
 			pctx->errcode = ea_refcount_create(0,
-					&global_ctx->ea_block_quota_inodes);
+					&ctx->ea_block_quota_inodes);
 			if (pctx->errcode) {
 				pctx->num = 4;
 refcount_fail:
 				fix_problem(ctx, PR_1_ALLOCATE_REFCOUNT, pctx);
 				ctx->flags |= E2F_FLAG_ABORT;
-				e2fsck_pass1_ea_unlock(ctx);
 				return 0;
 			}
 		}
 
-		ea_refcount_store(global_ctx->ea_block_quota_inodes,
+		ea_refcount_store(ctx->ea_block_quota_inodes,
 				  blk, quota_inodes);
 	}
 	ea_block_quota->blocks = quota_blocks;
 	ea_block_quota->inodes = quota_inodes;
 
-	inc_ea_inode_refs(global_ctx, pctx, first, end);
-	ea_refcount_store(global_ctx->refcount, blk, header->h_refcount - 1);
+	inc_ea_inode_refs(ctx, pctx, first, end);
+	ea_refcount_store(ctx->refcount, blk, header->h_refcount - 1);
+	ea_refcount_store(ctx->refcount_orig, blk, header->h_refcount);
 	/**
 	 * It might be racy that this block has been merged in the
 	 * global found map.
 	 */
 	if (!is_blocks_used(ctx, blk, 1))
 		ext2fs_fast_mark_block_bitmap2(ctx->block_found_map, blk);
-	ext2fs_fast_mark_block_bitmap2(global_ctx->block_ea_map, blk);
-	e2fsck_pass1_ea_unlock(ctx);
+	ext2fs_fast_mark_block_bitmap2(ctx->block_ea_map, blk);
 	return 1;
 
 clear_extattr:
