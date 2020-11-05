@@ -372,7 +372,8 @@ struct e2fsck_struct {
 	 */
 	ext2_ino_t stashed_ino;
 	struct ext2_inode *stashed_inode;
-
+	/* Thread index, if global_ctx is null, this field is useless */
+	int			thread_index;
 
 
 	/*
