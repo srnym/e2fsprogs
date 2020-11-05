@@ -446,7 +446,7 @@ struct e2fsck_struct {
 	__u32 extent_depth_count[MAX_EXTENT_DEPTH_COUNT];
 	__u32 fs_num_threads;
 	/* serialize fix operation for multiple threads */
-	pthread_mutex_t		 fs_fix_mutex;
+	pthread_rwlock_t	fs_fix_rwlock;
 	/* protect block_found_map, block_dup_map */
 	pthread_rwlock_t	 fs_block_map_rwlock;
 };

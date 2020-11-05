@@ -82,7 +82,8 @@ void fatal_error(e2fsck_t ctx, const char *msg)
 	}
 out:
 	ctx->flags |= E2F_FLAG_ABORT;
-	if (ctx->flags & E2F_FLAG_SETJMP_OK)
+	if (!(ctx->options & E2F_OPT_MULTITHREAD) &&
+	    ctx->flags & E2F_FLAG_SETJMP_OK)
 		longjmp(ctx->abort_loc, 1);
 	if (ctx->logf)
 		fprintf(ctx->logf, "Exit status: %d\n", exit_value);
