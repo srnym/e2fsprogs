@@ -73,7 +73,8 @@ struct ext2_bitmap_ops {
 	errcode_t (*copy_bmap)(ext2fs_generic_bitmap_64 src,
 			     ext2fs_generic_bitmap_64 dest);
 	errcode_t (*merge_bmap)(ext2fs_generic_bitmap_64 src,
-				ext2fs_generic_bitmap_64 dest);
+				ext2fs_generic_bitmap_64 dest,
+				ext2fs_generic_bitmap_64 dup);
 	errcode_t (*resize_bmap)(ext2fs_generic_bitmap_64 bitmap,
 			       __u64 new_end,
 			       __u64 new_real_end);

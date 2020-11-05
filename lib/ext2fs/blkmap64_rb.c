@@ -969,27 +969,53 @@ static void rb_print_stats(ext2fs_generic_bitmap_64 bitmap EXT2FS_ATTR((unused))
 #endif
 
 static errcode_t rb_merge_bmap(ext2fs_generic_bitmap_64 src,
-			       ext2fs_generic_bitmap_64 dest)
+			       ext2fs_generic_bitmap_64 dest,
+			       ext2fs_generic_bitmap_64 dup)
 {
-	struct ext2fs_rb_private *src_bp, *dest_bp;
+	struct ext2fs_rb_private *src_bp, *dest_bp, *dup_bp = NULL;
 	struct bmap_rb_extent *src_ext;
 	struct rb_node *src_node;
-	errcode_t retval = 0;
+	int retval = 0;
+	int dup_found = 0;
 
 	src_bp = (struct ext2fs_rb_private *) src->private;
 	dest_bp = (struct ext2fs_rb_private *) dest->private;
+	if (dup)
+		dup_bp = (struct ext2fs_rb_private *) dup->private;
 	src_bp->rcursor = NULL;
 	dest_bp->rcursor = NULL;
 
 	src_node = ext2fs_rb_first(&src_bp->root);
 	while (src_node) {
 		src_ext = node_to_extent(src_node);
-		rb_insert_extent(src_ext->start, src_ext->count, dest_bp);
+		retval = rb_test_clear_bmap_extent(dest,
+					src_ext->start + src->start,
+					src_ext->count);
+		if (retval) {
+			rb_insert_extent(src_ext->start, src_ext->count,
+					 dest_bp);
+		} else {
+			/* unlikely case, do it one by one block */
+			__u64 i;
 
+			for (i = src_ext->start;
+			     i < src_ext->start + src_ext->count; i++) {
+				retval = rb_test_clear_bmap_extent(dest, i + src->start, 1);
+				if (retval) {
+					rb_insert_extent(i, 1, dest_bp);
+				} else {
+					if (dup_bp)
+						rb_insert_extent(i, 1, dup_bp);
+					dup_found = 1;
+				}
+			}
+		}
 		src_node = ext2fs_rb_next(src_node);
 	}
 
-	return retval;
+	if (dup_found && dup)
+		return EEXIST;
+	return 0;
 }
 
 struct ext2_bitmap_ops ext2fs_blkmap64_rbtree = {

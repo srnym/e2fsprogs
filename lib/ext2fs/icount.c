@@ -785,12 +785,14 @@ errcode_t ext2fs_icount_merge(ext2_icount_t src, ext2_icount_t dest)
 	if (src->fullmap)
 		return ext2fs_icount_merge_full_map(src, dest);
 
-	retval = ext2fs_merge_bitmap(src->single, dest->single);
+	retval = ext2fs_merge_bitmap(src->single,
+				     dest->single, NULL);
 	if (retval)
 		return retval;
 
 	if (src->multiple) {
-		retval = ext2fs_merge_bitmap(src->multiple, dest->multiple);
+		retval = ext2fs_merge_bitmap(src->multiple,
+					     dest->multiple, NULL);
 		if (retval)
 			return retval;
 	}

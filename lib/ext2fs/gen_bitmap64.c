@@ -340,24 +340,32 @@ errcode_t ext2fs_copy_generic_bmap(ext2fs_generic_bitmap gen_src,
 }
 
 errcode_t ext2fs_merge_generic_bmap(ext2fs_generic_bitmap gen_src,
-				    ext2fs_generic_bitmap gen_dest)
+				    ext2fs_generic_bitmap gen_dest,
+				    ext2fs_generic_bitmap gen_dup)
 {
 	ext2fs_generic_bitmap_64 src = (ext2fs_generic_bitmap_64) gen_src;
 	ext2fs_generic_bitmap_64 dest = (ext2fs_generic_bitmap_64) gen_dest;
+	ext2fs_generic_bitmap_64 dup = (ext2fs_generic_bitmap_64) gen_dup;
 
 	if (!src || !dest)
 		return EINVAL;
 
-	if (!EXT2FS_IS_64_BITMAP(src) || !EXT2FS_IS_64_BITMAP(dest))
+	if (!EXT2FS_IS_64_BITMAP(src) || !EXT2FS_IS_64_BITMAP(dest) ||
+	    (dup && !EXT2FS_IS_64_BITMAP(dup)))
 		return EINVAL;
 
-	if (src->bitmap_ops != dest->bitmap_ops)
+	if (src->bitmap_ops != dest->bitmap_ops ||
+	    (dup && src->bitmap_ops != dup->bitmap_ops))
+		return EINVAL;
+
+	if (src->cluster_bits != dest->cluster_bits ||
+	    (dup && dup->cluster_bits != src->cluster_bits))
 		return EINVAL;
 
 	if (src->bitmap_ops->merge_bmap == NULL)
 		return EOPNOTSUPP;
 
-	return src->bitmap_ops->merge_bmap(src, dest);
+	return src->bitmap_ops->merge_bmap(src, dest, dup);
 }
 
 errcode_t ext2fs_resize_generic_bmap(ext2fs_generic_bitmap gen_bmap,
@@ -711,6 +719,39 @@ int ext2fs_test_block_bitmap_range2(ext2fs_block_bitmap gen_bmap,
 
 	return bmap->bitmap_ops->test_clear_bmap_extent(bmap, block, num);
 }
+
+int ext2fs_test_block_bitmap_range2_valid(ext2fs_block_bitmap bitmap,
+					  blk64_t block, unsigned int num)
+{
+	ext2fs_generic_bitmap_64 bmap = (ext2fs_generic_bitmap_64)bitmap;
+	__u64	end = block + num;
+
+	if (!bmap)
+		return 0;
+
+	if (EXT2FS_IS_32_BITMAP(bmap)) {
+		if ((block & ~0xffffffffULL) ||
+		    ((block+num-1) & ~0xffffffffULL)) {
+			return 0;
+		}
+	}
+
+	if (!EXT2FS_IS_64_BITMAP(bmap))
+		return 0;
+
+	/* convert to clusters if necessary */
+	block >>= bmap->cluster_bits;
+	end += (1 << bmap->cluster_bits) - 1;
+	end >>= bmap->cluster_bits;
+	num = end - block;
+
+	if ((block < bmap->start) || (block > bmap->end) ||
+	    (block+num-1 > bmap->end))
+		return 0;
+
+	return 1;
+}
+
 
 void ext2fs_mark_block_bitmap_range2(ext2fs_block_bitmap gen_bmap,
 				     blk64_t block, unsigned int num)
