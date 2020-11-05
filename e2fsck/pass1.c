@@ -2987,6 +2987,12 @@ static errcode_t e2fsck_pass1_merge_context(e2fsck_t global_ctx,
 	/* threads might enable E2F_OPT_YES */
 	global_ctx->options |= thread_ctx->options;
 
+	/*
+	 * The l+f inode may have been cleared, so zap it now and
+	 * later passes will recalculate it if necessary
+	 */
+	global_ctx->lost_and_found = 0;
+
 	/* merge extent depth count */
 	for (i = 0; i < MAX_EXTENT_DEPTH_COUNT; i++)
 		global_ctx->extent_depth_count[i] +=
