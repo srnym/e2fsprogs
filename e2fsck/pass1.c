@@ -56,6 +56,7 @@
 #include <e2p/e2p.h>
 
 #include "problem.h"
+#include "support/dict.h"
 
 #ifdef NO_INLINE_FUNCS
 #define _INLINE_
@@ -2411,6 +2412,11 @@ static errcode_t e2fsck_pass1_thread_prepare(e2fsck_t global_ctx,
 		log_out(thread_context, _("Scan group range [%d, %d)\n"),
 			tinfo->et_group_start, tinfo->et_group_end);
 	thread_context->fs = thread_fs;
+	retval = quota_init_context(&thread_context->qctx, thread_fs, 0);
+	if (retval) {
+		com_err(global_ctx->program_name, retval, "while init quota context");
+		goto out_fs;
+	}
 	*thread_ctx = thread_context;
 	return 0;
 out_fs:
@@ -2497,6 +2503,20 @@ static int e2fsck_pass1_merge_dirs_to_hash(e2fsck_t global_ctx, e2fsck_t thread_
 	return retval;
 }
 
+static void e2fsck_pass1_merge_quota_ctx(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+{
+	dict_t *dict;
+	enum quota_type	qtype;
+
+	for (qtype = 0; qtype < MAXQUOTAS; qtype++) {
+		dict = thread_ctx->qctx->quota_dict[qtype];
+		if (dict)
+			quota_merge_and_update_usage(
+				global_ctx->qctx->quota_dict[qtype], dict);
+	}
+	quota_release_context(&thread_ctx->qctx);
+}
+
 static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
 	errcode_t	 retval;
@@ -2539,6 +2559,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	int dx_dir_info_size = global_ctx->dx_dir_info_size;
 	int dx_dir_info_count = global_ctx->dx_dir_info_count;
 	ext2_u32_list dirs_to_hash = global_ctx->dirs_to_hash;
+	quota_ctx_t qctx = global_ctx->qctx;
 
 #ifdef HAVE_SETJMP_H
 	jmp_buf		 old_jmp;
@@ -2610,6 +2631,8 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 		com_err(global_ctx->program_name, 0, _("while merging dirs to hash\n"));
 		return retval;
 	}
+	global_ctx->qctx = qctx;
+	e2fsck_pass1_merge_quota_ctx(global_ctx, thread_ctx);
 
 	/*
 	 * PASS1_COPY_CTX_BITMAP might return directly from this function,

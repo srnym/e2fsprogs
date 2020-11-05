@@ -639,6 +639,25 @@ out:
 	return err;
 }
 
+errcode_t quota_merge_and_update_usage(dict_t *dest, dict_t *src)
+{
+	dnode_t *n;
+	struct dquot *src_dq, *dest_dq;
+
+	for (n = dict_first(src); n; n = dict_next(src, n)) {
+		src_dq = dnode_get(n);
+		if (!src_dq)
+			continue;
+		dest_dq = get_dq(dest, src_dq->dq_id);
+		if (dest_dq == NULL)
+			return -ENOMEM;
+		dest_dq->dq_dqb.dqb_curspace += src_dq->dq_dqb.dqb_curspace;
+		dest_dq->dq_dqb.dqb_curinodes += src_dq->dq_dqb.dqb_curinodes;
+	}
+
+	return 0;
+}
+
 /*
  * Compares the measured quota in qctx->quota_dict with that in the quota inode
  * on disk and updates the limits in qctx->quota_dict. 'usage_inconsistent' is
