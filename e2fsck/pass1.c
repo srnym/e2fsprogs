@@ -2476,6 +2476,27 @@ static errcode_t e2fsck_pass1_merge_icounts(e2fsck_t global_ctx, e2fsck_t thread
 	return 0;
 }
 
+static int e2fsck_pass1_merge_dirs_to_hash(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+{
+	int retval = 0;
+
+	if (thread_ctx->dirs_to_hash) {
+		if (!global_ctx->dirs_to_hash)
+			retval = ext2fs_badblocks_copy(thread_ctx->dirs_to_hash,
+						       &global_ctx->dirs_to_hash);
+		else
+			retval = ext2fs_badblocks_merge(thread_ctx->dirs_to_hash,
+							global_ctx->dirs_to_hash);
+
+		if (retval)
+			return retval;
+
+		ext2fs_badblocks_list_free(thread_ctx->dirs_to_hash);
+		thread_ctx->dirs_to_hash = 0;
+	}
+	return retval;
+}
+
 static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
 	errcode_t	 retval;
@@ -2517,6 +2538,7 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	__u32	large_files = global_ctx->large_files;
 	int dx_dir_info_size = global_ctx->dx_dir_info_size;
 	int dx_dir_info_count = global_ctx->dx_dir_info_count;
+	ext2_u32_list dirs_to_hash = global_ctx->dirs_to_hash;
 
 #ifdef HAVE_SETJMP_H
 	jmp_buf		 old_jmp;
@@ -2582,6 +2604,12 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	if (retval) {
 		com_err(global_ctx->program_name, 0,
 			_("while merging icounts\n"));
+		return retval;
+	}
+	global_ctx->dirs_to_hash = dirs_to_hash;
+	retval = e2fsck_pass1_merge_dirs_to_hash(global_ctx, thread_ctx);
+	if (retval) {
+		com_err(global_ctx->program_name, 0, _("while merging dirs to hash\n"));
 		return retval;
 	}
 
