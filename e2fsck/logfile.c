@@ -311,8 +311,9 @@ static FILE *set_up_log_file(e2fsck_t ctx, const char *key, const char *fn)
 
 	expand_logfn(ctx, log_fn, &s);
 	if (ctx->global_ctx) {
-		assert(ctx->thread_index < 1000);
-		sprintf(string_index, "%03d", ctx->thread_index);
+		assert(ctx->thread_info.et_thread_index < 1000);
+		sprintf(string_index, "%03d",
+			ctx->thread_info.et_thread_index);
 		append_string(&s, ".", 1);
 		append_string(&s, string_index, 0);
 	}

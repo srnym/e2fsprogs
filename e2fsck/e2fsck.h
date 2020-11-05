@@ -227,6 +227,20 @@ typedef struct e2fsck_struct *e2fsck_t;
 
 #define MAX_EXTENT_DEPTH_COUNT 5
 
+/*
+ * Fields that used for multi-thread
+ */
+struct e2fsck_thread {
+	/* The start group number for this thread */
+	dgrp_t		et_group_start;
+	/* The end (not included) group number for this thread*/
+	dgrp_t		et_group_end;
+	/* The next group number to check */
+	dgrp_t		et_group_next;
+	/* Thread index */
+	int		et_thread_index;
+};
+
 struct e2fsck_struct {
 	/* ---- Following fields are never updated during the pass1 ---- */
 	/* Global context to get the cancel flag */
@@ -372,8 +386,8 @@ struct e2fsck_struct {
 	 */
 	ext2_ino_t stashed_ino;
 	struct ext2_inode *stashed_inode;
-	/* Thread index, if global_ctx is null, this field is useless */
-	int			thread_index;
+	/* if @global_ctx is null, this field is useless */
+	struct e2fsck_thread	 thread_info;
 
 
 	/*
