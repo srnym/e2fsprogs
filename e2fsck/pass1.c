@@ -2417,6 +2417,28 @@ static void e2fsck_pass1_merge_dir_info(e2fsck_t global_ctx, e2fsck_t thread_ctx
 			      global_ctx->dir_info);
 }
 
+#define PASS1_MERGE_CTX_ICOUNT(_dest, _src, _field)			\
+do {									\
+    if (_src->_field) {							\
+        if (_dest->_field == NULL) {					\
+            _dest->_field = _src->_field;				\
+            _src->_field = NULL;					\
+        } else {							\
+            errcode_t _ret;						\
+            _ret = ext2fs_icount_merge(_src->_field, _dest->_field);	\
+            if (_ret)							\
+                return _ret;						\
+        }								\
+    }									\
+} while (0)
+
+static errcode_t e2fsck_pass1_merge_icounts(e2fsck_t global_ctx, e2fsck_t thread_ctx)
+{
+	PASS1_MERGE_CTX_ICOUNT(global_ctx, thread_ctx, inode_count);
+	PASS1_MERGE_CTX_ICOUNT(global_ctx, thread_ctx, inode_link_info);
+	return 0;
+}
+
 static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 {
 	errcode_t	 retval;
@@ -2436,7 +2458,9 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	ext2fs_block_bitmap block_ea_map = global_ctx->block_ea_map;
 	ext2fs_block_bitmap block_metadata_map = global_ctx->block_metadata_map;
 	ext2fs_block_bitmap inodes_to_rebuild = global_ctx->inodes_to_rebuild;
-	
+	ext2_icount_t inode_count = global_ctx->inode_count;
+	ext2_icount_t inode_link_info = global_ctx->inode_link_info;
+
 #ifdef HAVE_SETJMP_H
 	jmp_buf		 old_jmp;
 
@@ -2459,6 +2483,8 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	global_ctx->block_metadata_map = block_metadata_map;
 	global_ctx->dir_info = dir_info;
 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
+	global_ctx->inode_count = inode_count;
+	global_ctx->inode_link_info = inode_link_info;
 
 	/* Keep the global singal flags*/
 	global_ctx->flags |= (flags & E2F_FLAG_SIGNAL_MASK) |
@@ -2474,6 +2500,12 @@ static int e2fsck_pass1_thread_join_one(e2fsck_t global_ctx, e2fsck_t thread_ctx
 	global_ctx->logf = global_logf;
 	global_ctx->problem_logf = global_problem_logf;
 	global_ctx->global_ctx = NULL;
+	retval = e2fsck_pass1_merge_icounts(global_ctx, thread_ctx);
+	if (retval) {
+		com_err(global_ctx->program_name, 0,
+			_("while merging icounts\n"));
+		return retval;
+	}
 
 	/*
 	 * PASS1_COPY_CTX_BITMAP might return directly from this function,
@@ -2515,6 +2547,8 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_dup_map);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_ea_map);
 	PASS1_FREE_CTX_BITMAP(thread_ctx, block_metadata_map);
+	ext2fs_free_icount(thread_ctx->inode_count);
+	ext2fs_free_icount(thread_ctx->inode_link_info);
 	e2fsck_free_dir_info(thread_ctx);
 	ext2fs_free_mem(&thread_ctx);
 
