@@ -2248,18 +2248,21 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	ext2fs_inode_bitmap inode_map;
 	ext2fs_block_bitmap block_map;
 	ext2_badblocks_list badblocks;
+	ext2_dblist dblist;
 
 	dest_io = dest->io;
 	dest_image_io = dest->image_io;
 	inode_map = dest->inode_map;
 	block_map = dest->block_map;
 	badblocks = dest->badblocks;
+	dblist = dest->dblist;
 	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
 	dest->io = dest_io;
 	dest->image_io = dest_image_io;
 	dest->inode_map = inode_map;
 	dest->block_map = block_map;
 	dest->badblocks = badblocks;
+	dest->dblist = dblist;
 	/*
 	 * PASS1_MERGE_FS_BITMAP might return directly from this function,
 	 * so please do NOT leave any garbage behind after returning.
@@ -2268,11 +2271,16 @@ static int _e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 	PASS1_MERGE_FS_BITMAP(dest, src, block_map);
 
 	if (src->dblist) {
-		retval = ext2fs_copy_dblist(src->dblist, &dest->dblist);
-		if (retval)
-			return retval;
-		/* The ext2fs_copy_dblist() uses the src->fs as the fs */
-		dest->dblist->fs = dest;
+		if (dest->dblist) {
+			retval = ext2fs_merge_dblist(src->dblist, dest->dblist);
+			if (retval)
+				return retval;
+		} else {
+			/* The ext2fs_copy_dblist() uses the src->fs as the fs */
+			dest->dblist = src->dblist;
+			dest->dblist->fs = dest;
+			src->dblist = NULL;
+		}
 	}
 
 	if (src->badblocks) {
