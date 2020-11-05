@@ -11,6 +11,7 @@
 
 #include "config.h"
 #include <stdio.h>
+#include <assert.h>
 #include <string.h>
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -56,6 +57,65 @@ static errcode_t make_u32_list(int size, int num, __u32 *list,
 	return 0;
 }
 
+/*
+ * Merge list from src to dest
+ */
+static errcode_t merge_u32_list(ext2_u32_list src, ext2_u32_list dest)
+{
+	errcode_t	 retval;
+	int		 src_count = src->num;
+	int		 dest_count = dest->num;
+	int		 size = src_count + dest_count;
+	int		 size_entry = sizeof(blk_t);
+	blk_t		*array;
+	blk_t		*array_ptr;
+	blk_t		*src_array = src->list;
+	blk_t		*dest_array = dest->list;
+	int		 src_index = 0;
+	int		 dest_index = 0;
+
+	if (src->num == 0)
+		return 0;
+
+	retval = ext2fs_get_array(size, size_entry, &array);
+	if (retval)
+		return retval;
+
+	array_ptr = array;
+	/*
+	 * This can be improved by binary search and memcpy, but codes would
+	 * be complexer. And if number of bad blocks is small, the optimization
+	 * won't improve performance a lot.
+	 */
+	while (src_index < src_count || dest_index < dest_count) {
+		if (src_index >= src_count) {
+			memcpy(array_ptr, &dest_array[dest_index],
+			       (dest_count - dest_index) * size_entry);
+			break;
+		}
+		if (dest_index >= dest_count) {
+			memcpy(array_ptr, &src_array[src_index],
+			       (src_count - src_index) * size_entry);
+			break;
+		}
+		if (src_array[src_index] < dest_array[dest_index]) {
+			*array_ptr = src_array[src_index];
+			src_index++;
+		} else {
+			assert(src_array[src_index] > dest_array[dest_index]);
+			*array_ptr = dest_array[dest_index];
+			dest_index++;
+		}
+		array_ptr++;
+	}
+
+	ext2fs_free_mem(&dest->list);
+	dest->list = array;
+	dest->num = src_count + dest_count;
+	dest->size = size;
+	return 0;
+}
+
 
 /*
  * This procedure creates an empty u32 list.
@@ -79,13 +139,7 @@ errcode_t ext2fs_badblocks_list_create(ext2_badblocks_list *ret, int size)
  */
 errcode_t ext2fs_u32_copy(ext2_u32_list src, ext2_u32_list *dest)
 {
-	errcode_t	retval;
-
-	retval = make_u32_list(src->size, src->num, src->list, dest);
-	if (retval)
-		return retval;
-	(*dest)->badblocks_flags = src->badblocks_flags;
-	return 0;
+	return make_u32_list(src->size, src->num, src->list, dest);
 }
 
 errcode_t ext2fs_badblocks_copy(ext2_badblocks_list src,
@@ -93,6 +147,13 @@ errcode_t ext2fs_badblocks_copy(ext2_badblocks_list src,
 {
 	return ext2fs_u32_copy((ext2_u32_list) src,
 			       (ext2_u32_list *) dest);
+}
+
+errcode_t ext2fs_badblocks_merge(ext2_badblocks_list src,
+				 ext2_badblocks_list dest)
+{
+	return merge_u32_list((ext2_u32_list) src,
+			      (ext2_u32_list) dest);
 }
 
 /*
