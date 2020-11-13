@@ -1729,6 +1729,9 @@ failure:
 
 	ctx->fs = fs;
 	fs->now = ctx->now;
+#ifdef CONFIG_PFSCK
+	fs->fs_num_threads = ctx->pfs_num_threads;
+#endif
 	sb = fs->super;
 
 	if (sb->s_rev_level > E2FSCK_CURRENT_REV) {
