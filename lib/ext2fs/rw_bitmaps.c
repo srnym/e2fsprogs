@@ -23,7 +23,9 @@
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
+#ifdef HAVE_PTHREAD_H
 #include <pthread.h>
+#endif
 
 #include "ext2_fs.h"
 #include "ext2fs.h"
@@ -206,7 +208,7 @@ static int bitmap_tail_verify(unsigned char *bitmap, int first, int last)
 	return 1;
 }
 
-static errcode_t read_bitmaps_range_prepare(ext2_filsys fs, int do_inode, int do_block)
+static errcode_t read_bitmaps_range_prepare(ext2_filsys fs, int flags)
 {
 	errcode_t retval;
 	int block_nbytes = EXT2_CLUSTERS_PER_GROUP(fs->super) / 8;
@@ -225,7 +227,7 @@ static errcode_t read_bitmaps_range_prepare(ext2_filsys fs, int do_inode, int do
 	if (retval)
 		return retval;
 
-	if (do_block) {
+	if (flags & EXT2FS_BITMAPS_BLOCK) {
 		if (fs->block_map)
 			ext2fs_free_block_bitmap(fs->block_map);
 		strcpy(buf, "block bitmap for ");
@@ -235,7 +237,7 @@ static errcode_t read_bitmaps_range_prepare(ext2_filsys fs, int do_inode, int do
 			goto cleanup;
 	}
 
-	if (do_inode) {
+	if (flags & EXT2FS_BITMAPS_INODE) {
 		if (fs->inode_map)
 			ext2fs_free_inode_bitmap(fs->inode_map);
 		strcpy(buf, "inode bitmap for ");
@@ -249,11 +251,11 @@ static errcode_t read_bitmaps_range_prepare(ext2_filsys fs, int do_inode, int do
 	return retval;
 
 cleanup:
-	if (do_block) {
+	if (flags & EXT2FS_BITMAPS_BLOCK) {
 		ext2fs_free_block_bitmap(fs->block_map);
 		fs->block_map = 0;
 	}
-	if (do_inode) {
+	if (flags & EXT2FS_BITMAPS_INODE) {
 		ext2fs_free_inode_bitmap(fs->inode_map);
 		fs->inode_map = 0;
 	}
@@ -262,13 +264,13 @@ cleanup:
 	return retval;
 }
 
-static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_block,
-					  dgrp_t start, dgrp_t end, pthread_mutex_t *mutex,
-					  io_channel io, int *tail_flags)
+static errcode_t read_bitmaps_range_start(ext2_filsys fs, int flags,
+					  dgrp_t start, dgrp_t end,
+					  pthread_mutex_t *mutex,
+					  int *tail_flags)
 {
 	dgrp_t i;
 	char *block_bitmap = 0, *inode_bitmap = 0;
-	char *buf;
 	errcode_t retval = 0;
 	int block_nbytes = EXT2_CLUSTERS_PER_GROUP(fs->super) / 8;
 	int inode_nbytes = EXT2_INODES_PER_GROUP(fs->super) / 8;
@@ -279,25 +281,19 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 	blk64_t   blk_cnt;
 	ext2_ino_t ino_itr = 1;
 	ext2_ino_t ino_cnt;
-	io_channel this_io;
-
-	if (!io)
-		this_io = fs->io;
-	else
-		this_io = io;
 
 	csum_flag = ext2fs_has_group_desc_csum(fs);
 
-	if (do_block) {
-		retval = io_channel_alloc_buf(this_io, 0, &block_bitmap);
+	if (flags & EXT2FS_BITMAPS_BLOCK) {
+		retval = io_channel_alloc_buf(fs->io, 0, &block_bitmap);
 		if (retval)
 			goto cleanup;
 	} else {
 		block_nbytes = 0;
 	}
 
-	if (do_inode) {
-		retval = io_channel_alloc_buf(this_io, 0, &inode_bitmap);
+	if (flags & EXT2FS_BITMAPS_INODE) {
+		retval = io_channel_alloc_buf(fs->io, 0, &inode_bitmap);
 		if (retval)
 			goto cleanup;
 	} else {
@@ -356,7 +352,7 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 			    (blk >= ext2fs_blocks_count(fs->super)))
 				blk = 0;
 			if (blk) {
-				retval = io_channel_read_blk64(this_io, blk,
+				retval = io_channel_read_blk64(fs->io, blk,
 							       1, block_bitmap);
 				if (retval) {
 					retval = EXT2_ET_BLOCK_BITMAP_READ;
@@ -377,12 +373,16 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 			} else
 				memset(block_bitmap, 0, block_nbytes);
 			cnt = block_nbytes << 3;
+#ifdef HAVE_PTHREAD
 			if (mutex)
 				pthread_mutex_lock(mutex);
+#endif
 			retval = ext2fs_set_block_bitmap_range2(fs->block_map,
 					       blk_itr, cnt, block_bitmap);
+#ifdef HAVE_PTHREAD
 			if (mutex)
 				pthread_mutex_unlock(mutex);
+#endif
 			if (retval)
 				goto cleanup;
 			blk_itr += block_nbytes << 3;
@@ -395,7 +395,7 @@ static errcode_t read_bitmaps_range_start(ext2_filsys fs, int do_inode, int do_b
 			    (blk >= ext2fs_blocks_count(fs->super)))
 				blk = 0;
 			if (blk) {
-				retval = io_channel_read_blk64(this_io, blk,
+				retval = io_channel_read_blk64(fs->io, blk,
 							       1, inode_bitmap);
 				if (retval) {
 					retval = EXT2_ET_INODE_BITMAP_READ;
@@ -434,130 +434,133 @@ cleanup:
 		ext2fs_free_mem(&inode_bitmap);
 	if (block_bitmap)
 		ext2fs_free_mem(&block_bitmap);
-	if (buf)
-		ext2fs_free_mem(&buf);
-
 	return retval;
 }
 
-static errcode_t read_bitmaps_range_end(ext2_filsys fs, int do_inode, int do_block,
-					errcode_t retval, int tail_flags)
+static errcode_t read_bitmaps_range_end(ext2_filsys fs, int flags,
+					int tail_flags)
 {
-
-	if (retval)
-		goto cleanup;
+	errcode_t retval;
 
 	/* Mark group blocks for any BLOCK_UNINIT groups */
-	if (do_block) {
+	if (flags & EXT2FS_BITMAPS_BLOCK) {
 		retval = mark_uninit_bg_group_blocks(fs);
 		if (retval)
-			goto cleanup;
+			return retval;
 		fs->flags &= ~EXT2_FLAG_BBITMAP_TAIL_PROBLEM;
 	}
-	if (do_inode)
+	if (flags & EXT2FS_BITMAPS_INODE)
 		fs->flags &= ~EXT2_FLAG_IBITMAP_TAIL_PROBLEM;
 	fs->flags |= tail_flags;
 
 	return 0;
-cleanup:
-	if (do_block) {
+}
+
+static void read_bitmaps_cleanup_on_error(ext2_filsys fs, int flags)
+{
+	if (flags & EXT2FS_BITMAPS_BLOCK) {
 		ext2fs_free_block_bitmap(fs->block_map);
 		fs->block_map = 0;
 	}
-	if (do_inode) {
+	if (flags & EXT2FS_BITMAPS_INODE) {
 		ext2fs_free_inode_bitmap(fs->inode_map);
 		fs->inode_map = 0;
 	}
-	return retval;
 }
 
-static errcode_t read_bitmaps_range(ext2_filsys fs, int do_inode, int do_block,
+static errcode_t read_bitmaps_range(ext2_filsys fs, int flags,
 				    dgrp_t start, dgrp_t end)
 {
 	errcode_t retval;
 	int tail_flags = 0;
 
-	retval = read_bitmaps_range_prepare(fs, do_inode, do_block);
+	retval = read_bitmaps_range_prepare(fs, flags);
 	if (retval)
 		return retval;
 
-	retval = read_bitmaps_range_start(fs, do_inode, do_block, start, end, NULL,
+	retval = read_bitmaps_range_start(fs, flags, start, end,
 					  NULL, &tail_flags);
-
-	return read_bitmaps_range_end(fs, do_inode, do_block, retval, tail_flags);
+	if (retval == 0)
+		retval = read_bitmaps_range_end(fs, flags, tail_flags);
+	if (retval)
+		read_bitmaps_cleanup_on_error(fs, flags);
+	return retval;
 }
 
-#ifdef CONFIG_PFSCK
+#ifdef HAVE_PTHREAD
 struct read_bitmaps_thread_info {
 	ext2_filsys	rbt_fs;
-	int 		rbt_do_inode;
-	int		rbt_do_block;
+	int		rbt_flags;
 	dgrp_t		rbt_grp_start;
 	dgrp_t		rbt_grp_end;
 	errcode_t	rbt_retval;
 	pthread_mutex_t *rbt_mutex;
 	int		rbt_tail_flags;
-	io_channel      rbt_io;
 };
 
-dgrp_t ext2fs_get_avg_group(ext2_filsys fs)
-{
-	dgrp_t average_group;
-	unsigned flexbg_size;
-
-	if (fs->fs_num_threads <= 1)
-		return fs->group_desc_count;
-
-	average_group = fs->group_desc_count / fs->fs_num_threads;
-	if (average_group <= 1)
-		return 1;
-
-	if (ext2fs_has_feature_flex_bg(fs->super)) {
-		int times = 1;
-
-		flexbg_size = 1 << fs->super->s_log_groups_per_flex;
-		if (average_group % flexbg_size) {
-			times = average_group / flexbg_size;
-			average_group = times * flexbg_size;
-		}
-	}
-
-	return average_group;
-}
-
-static void* read_bitmaps_thread(void *data)
+static void *read_bitmaps_thread(void *data)
 {
 	struct read_bitmaps_thread_info *rbt = data;
 
-	rbt->rbt_retval = read_bitmaps_range_start(rbt->rbt_fs,
-				rbt->rbt_do_inode, rbt->rbt_do_block,
+	rbt->rbt_retval = read_bitmaps_range_start(rbt->rbt_fs, rbt->rbt_flags,
 				rbt->rbt_grp_start, rbt->rbt_grp_end,
-				rbt->rbt_mutex, rbt->rbt_io, &rbt->rbt_tail_flags);
+				rbt->rbt_mutex, &rbt->rbt_tail_flags);
 	return NULL;
 }
 #endif
 
-static errcode_t read_bitmaps(ext2_filsys fs, int do_inode, int do_block)
+errcode_t ext2fs_rw_bitmaps(ext2_filsys fs, int flags, int num_threads)
 {
-#ifdef CONFIG_PFSCK
+#ifdef HAVE_PTHREAD
 	pthread_attr_t	attr;
-	int num_threads = fs->fs_num_threads;
 	pthread_t *thread_ids = NULL;
 	struct read_bitmaps_thread_info *thread_infos = NULL;
 	pthread_mutex_t rbt_mutex = PTHREAD_MUTEX_INITIALIZER;
 	errcode_t retval;
 	errcode_t rc;
+	unsigned flexbg_size = 1 << fs->super->s_log_groups_per_flex;
 	dgrp_t average_group;
 	int i, tail_flags = 0;
 	io_manager manager = unix_io_manager;
-#else
-	int num_threads = 1;
 #endif
 
-	if (num_threads <= 1 || (fs->flags & EXT2_FLAG_IMAGE_FILE))
-		return read_bitmaps_range(fs, do_inode, do_block, 0, fs->group_desc_count - 1);
+	if (flags & ~EXT2FS_BITMAPS_VALID_FLAGS)
+		return EXT2_ET_INVALID_ARGUMENT;
 
-#ifdef CONFIG_PFSCK
+	if (flags & EXT2FS_BITMAPS_WRITE)
+		return write_bitmaps(fs, flags & EXT2FS_BITMAPS_INODE,
+				     flags & EXT2FS_BITMAPS_BLOCK);
+
+#ifdef HAVE_PTHREAD
+	if (((fs->io->flags & CHANNEL_FLAGS_THREADS) == 0) ||
+	    (num_threads == 1) || (fs->flags & EXT2_FLAG_IMAGE_FILE))
+		goto fallback;
+
+	if (num_threads < 0) {
+#if defined(HAVE_SYSCONF) && defined(_SC_NPROCESSORS_CONF)
+		num_threads = sysconf(_SC_NPROCESSORS_CONF);
+#else
+		/*
+		 * Guess for now; eventually we should probably define
+		 * ext2fs_get_num_cpus() and teach it how to get this info on
+		 * MacOS, FreeBSD, etc.
+		 * ref: https://stackoverflow.com/questions/150355
+		 */
+		num_threads = 4;
+#endif
+		if (num_threads <= 1)
+			goto fallback;
+	}
+	if (num_threads > fs->group_desc_count)
+		num_threads = fs->group_desc_count;
+	average_group = fs->group_desc_count / num_threads;
+	if (ext2fs_has_feature_flex_bg(fs->super)) {
+		average_group = (average_group / flexbg_size) * flexbg_size;
+	}
+	if (average_group == 0)
+		goto fallback;
+
+	io_channel_set_options(fs->io, "cache=off");
 	retval = pthread_attr_init(&attr);
 	if (retval)
 		return retval;
@@ -571,16 +574,14 @@ static errcode_t read_bitmaps(ext2_filsys fs, int do_inode, int do_block)
 	if (!thread_infos)
 		goto out;
 
-	average_group = ext2fs_get_avg_group(fs);
-	retval = read_bitmaps_range_prepare(fs, do_inode, do_block);
+	retval = read_bitmaps_range_prepare(fs, flags);
 	if (retval)
 		goto out;
 
-	fprintf(stdout, "Multiple threads triggered to read bitmaps\n");
+//	fprintf(stdout, "Multiple threads triggered to read bitmaps\n");
 	for (i = 0; i < num_threads; i++) {
 		thread_infos[i].rbt_fs = fs;
-		thread_infos[i].rbt_do_inode = do_inode;
-		thread_infos[i].rbt_do_block = do_block;
+		thread_infos[i].rbt_flags = flags;
 		thread_infos[i].rbt_mutex = &rbt_mutex;
 		thread_infos[i].rbt_tail_flags = 0;
 		if (i == 0)
@@ -592,17 +593,10 @@ static errcode_t read_bitmaps(ext2_filsys fs, int do_inode, int do_block)
 			thread_infos[i].rbt_grp_end = fs->group_desc_count - 1;
 		else
 			thread_infos[i].rbt_grp_end = average_group * (i + 1);
-		retval = manager->open(fs->device_name, IO_FLAG_RW,
-					&thread_infos[i].rbt_io);
-		if (retval)
-			break;
-		io_channel_set_blksize(thread_infos[i].rbt_io, fs->io->block_size);
 		retval = pthread_create(&thread_ids[i], &attr,
 					&read_bitmaps_thread, &thread_infos[i]);
-		if (retval) {
-			io_channel_close(thread_infos[i].rbt_io);
+		if (retval)
 			break;
-		}
 	}
 	for (i = 0; i < num_threads; i++) {
 		if (!thread_ids[i])
@@ -614,7 +608,6 @@ static errcode_t read_bitmaps(ext2_filsys fs, int do_inode, int do_block)
 		if (rc && !retval)
 			retval = rc;
 		tail_flags |= thread_infos[i].rbt_tail_flags;
-		io_channel_close(thread_infos[i].rbt_io);
 	}
 out:
 	rc = pthread_attr_destroy(&attr);
@@ -623,18 +616,26 @@ out:
 	free(thread_infos);
 	free(thread_ids);
 
-	return read_bitmaps_range_end(fs, do_inode, do_block, retval, tail_flags);
+	if (retval == 0)
+		retval = read_bitmaps_range_end(fs, flags, tail_flags);
+	if (retval)
+		read_bitmaps_cleanup_on_error(fs, flags);
+	/* XXX should save and restore cache setting */
+	io_channel_set_options(fs->io, "cache=on");
+	return retval;
+fallback:
 #endif
+	return read_bitmaps_range(fs, flags, 0, fs->group_desc_count - 1);
 }
 
 errcode_t ext2fs_read_inode_bitmap(ext2_filsys fs)
 {
-	return read_bitmaps(fs, 1, 0);
+	return ext2fs_rw_bitmaps(fs, EXT2FS_BITMAPS_INODE, -1);
 }
 
 errcode_t ext2fs_read_block_bitmap(ext2_filsys fs)
 {
-	return read_bitmaps(fs, 0, 1);
+	return ext2fs_rw_bitmaps(fs, EXT2FS_BITMAPS_BLOCK, -1);
 }
 
 errcode_t ext2fs_write_inode_bitmap(ext2_filsys fs)
@@ -649,10 +650,15 @@ errcode_t ext2fs_write_block_bitmap (ext2_filsys fs)
 
 errcode_t ext2fs_read_bitmaps(ext2_filsys fs)
 {
-	if (fs->inode_map && fs->block_map)
-		return 0;
+	int flags = 0;
 
-	return read_bitmaps(fs, !fs->inode_map, !fs->block_map);
+	if (!fs->inode_map)
+		flags |= EXT2FS_BITMAPS_INODE;
+	if (!fs->block_map)
+		flags |= EXT2FS_BITMAPS_BLOCK;
+	if (flags == 0)
+		return 0;
+	return ext2fs_rw_bitmaps(fs, flags, -1);
 }
 
 errcode_t ext2fs_write_bitmaps(ext2_filsys fs)
