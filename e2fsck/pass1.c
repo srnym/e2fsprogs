@@ -2415,15 +2415,6 @@ static errcode_t e2fsck_pass1_copy_bitmap(ext2_filsys fs, ext2fs_generic_bitmap 
 	return 0;
 }
 
-static void e2fsck_pass1_free_bitmap(ext2fs_generic_bitmap *bitmap)
-{
-	if (*bitmap) {
-		ext2fs_free_generic_bmap(*bitmap);
-		*bitmap = NULL;
-	}
-
-}
-
 static errcode_t e2fsck_pass1_merge_bitmap(ext2_filsys fs, ext2fs_generic_bitmap *src,
 					  ext2fs_generic_bitmap *dest)
 {
