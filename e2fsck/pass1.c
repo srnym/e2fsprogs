@@ -56,6 +56,7 @@
 /* todo remove this finally */
 #include <ext2fs/ext2fsP.h>
 #include <e2p/e2p.h>
+#include <ext2fs/ext2fs.h>
 
 #include "problem.h"
 
@@ -2401,20 +2402,6 @@ endit:
 }
 
 #ifdef CONFIG_PFSCK
-static errcode_t e2fsck_pass1_copy_bitmap(ext2_filsys fs, ext2fs_generic_bitmap *src,
-					  ext2fs_generic_bitmap *dest)
-{
-	errcode_t ret;
-
-	ret = ext2fs_copy_bitmap(*src, dest);
-	if (ret)
-		return ret;
-
-	(*dest)->fs = fs;
-
-	return 0;
-}
-
 static errcode_t e2fsck_pass1_merge_bitmap(ext2_filsys fs, ext2fs_generic_bitmap *src,
 					  ext2fs_generic_bitmap *dest)
 {
@@ -2435,48 +2422,21 @@ static errcode_t e2fsck_pass1_merge_bitmap(ext2_filsys fs, ext2fs_generic_bitmap
 	return 0;
 }
 
-static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, e2fsck_t src_context,
-				      ext2_filsys src)
+static errcode_t e2fsck_open_channel_fs(ext2_filsys dest, ext2_filsys src)
 {
 	errcode_t	retval;
 
-	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
-	dest->inode_map = NULL;
-	dest->block_map = NULL;
-	dest->badblocks = NULL;
-	if (dest->dblist)
-		dest->dblist->fs = dest;
-	if (src->block_map) {
-		retval = e2fsck_pass1_copy_bitmap(dest, &src->block_map,
-						  &dest->block_map);
-		if (retval)
-			return retval;
-	}
-	if (src->inode_map) {
-		retval = e2fsck_pass1_copy_bitmap(dest, &src->inode_map,
-						  &dest->inode_map);
-		if (retval)
-			return retval;
-	}
-
-	if (src->badblocks) {
-		retval = ext2fs_badblocks_copy(src->badblocks,
-					       &dest->badblocks);
-		if (retval)
-			return retval;
-	}
-
-	/* disable it for now */
-	src_context->openfs_flags &= ~EXT2_FLAG_EXCLUSIVE;
-	retval = ext2fs_open_channel(dest, src_context->io_options,
-				     src_context->io_manager,
-				     src_context->openfs_flags,
-				     src->io->block_size);
+	retval = dest->io->manager->open(dest->device_name, IO_FLAG_THREADS,
+					  &dest->io);
 	if (retval)
 		return retval;
 
+	dest->image_io = dest->io;
+	dest->io->app_data = dest;
+
 	/* Block size might not be default */
 	io_channel_set_blksize(dest->io, src->io->block_size);
+	/* Set e2fsck specific read/write error handlers */
 	ehandler_init(dest->io);
 
 	assert(dest->io->magic == src->io->magic);
@@ -2492,95 +2452,20 @@ static errcode_t e2fsck_pass1_copy_fs(ext2_filsys dest, e2fsck_t src_context,
 	assert(dest->io->align == src->io->align);
 
 	/* The data should be written to disk immediately */
-	dest->io->flags |= CHANNEL_FLAGS_WRITETHROUGH;
-	/* icache will be rebuilt if needed, so do not copy from @src */
-	src->icache = NULL;
+	dest->io->flags |= CHANNEL_FLAGS_THREADS | CHANNEL_FLAGS_WRITETHROUGH;
+
 	return 0;
 }
 
 static int e2fsck_pass1_merge_fs(ext2_filsys dest, ext2_filsys src)
 {
-	struct ext2_inode_cache *icache = dest->icache;
 	errcode_t retval = 0;
-	io_channel dest_io;
-	io_channel dest_image_io;
-	ext2fs_inode_bitmap inode_map;
-	ext2fs_block_bitmap block_map;
-	ext2_badblocks_list badblocks;
-	ext2_dblist dblist;
-	int flags;
-	e2fsck_t dest_ctx = dest->priv_data;
 
-	dest_io = dest->io;
-	dest_image_io = dest->image_io;
-	inode_map = dest->inode_map;
-	block_map = dest->block_map;
-	badblocks = dest->badblocks;
-	dblist = dest->dblist;
-	flags = dest->flags;
-
-	memcpy(dest, src, sizeof(struct struct_ext2_filsys));
-	dest->io = dest_io;
-	dest->image_io = dest_image_io;
-	dest->icache = icache;
-	dest->inode_map = inode_map;
-	dest->block_map = block_map;
-	dest->badblocks = badblocks;
-	dest->dblist = dblist;
-	dest->priv_data = dest_ctx;
-	if (dest->dblist)
-		dest->dblist->fs = dest;
-	dest->flags = src->flags | flags;
-	if (!(src->flags & EXT2_FLAG_VALID) || !(flags & EXT2_FLAG_VALID))
-		ext2fs_unmark_valid(dest);
-
-	if (src->icache) {
-		ext2fs_free_inode_cache(src->icache);
-		src->icache = NULL;
-	}
-
-	retval = e2fsck_pass1_merge_bitmap(dest, &src->inode_map,
-					   &dest->inode_map);
+	retval = ext2fs_free_fs(src);
 	if (retval)
 		goto out;
 
-	retval = e2fsck_pass1_merge_bitmap(dest, &src->block_map,
-					  &dest->block_map);
-	if (retval)
-		goto out;
-
-	if (src->dblist) {
-		if (dest->dblist) {
-			retval = ext2fs_merge_dblist(src->dblist,
-						     dest->dblist);
-			if (retval)
-				goto out;
-		} else {
-			dest->dblist = src->dblist;
-			dest->dblist->fs = dest;
-			src->dblist = NULL;
-		}
-	}
-
-	if (src->badblocks) {
-		if (dest->badblocks == NULL)
-			retval = ext2fs_badblocks_copy(src->badblocks,
-						       &dest->badblocks);
-		else
-			retval = ext2fs_badblocks_merge(src->badblocks,
-							dest->badblocks);
-	}
 out:
-	io_channel_close(src->io);
-	if (src->inode_map)
-		ext2fs_free_generic_bmap(src->inode_map);
-	if (src->block_map)
-		ext2fs_free_generic_bmap(src->block_map);
-	if (src->badblocks)
-		ext2fs_badblocks_list_free(src->badblocks);
-	if (src->dblist)
-		ext2fs_free_dblist(src->dblist);
-
 	return retval;
 }
 
@@ -2678,14 +2563,17 @@ static errcode_t e2fsck_pass1_thread_prepare(e2fsck_t global_ctx, e2fsck_t *thre
 		goto out_context;
 
 	thread_context->global_ctx = global_ctx;
-	retval = ext2fs_get_mem(sizeof(struct struct_ext2_filsys), &thread_fs);
+	//retval = ext2fs_get_mem(sizeof(struct struct_ext2_filsys), &thread_fs);
+	retval = ext2fs_clone_fs(global_fs, &thread_fs,
+		EXT2FS_CLONE_BLOCK | EXT2FS_CLONE_INODE |
+		EXT2FS_CLONE_BADBLOCKS | EXT2FS_CLONE_DBLIST);
 	if (retval) {
 		com_err(global_ctx->program_name, retval, "while allocating memory");
 		goto out_context;
 	}
 
 	io_channel_flush_cleanup(global_fs->io);
-	retval = e2fsck_pass1_copy_fs(thread_fs, global_ctx, global_fs);
+	retval = e2fsck_open_channel_fs(thread_fs, global_fs);
 	if (retval) {
 		com_err(global_ctx->program_name, retval, "while copying fs");
 		goto out_fs;
@@ -3001,7 +2889,7 @@ static errcode_t e2fsck_pass1_merge_context(e2fsck_t global_ctx,
 	e2fsck_pass1_merge_dir_info(global_ctx, thread_ctx);
 	e2fsck_pass1_merge_dx_dir(global_ctx, thread_ctx);
 
-	retval = e2fsck_pass1_merge_fs(global_ctx->fs, thread_ctx->fs);
+	retval = ext2fs_free_fs(thread_ctx->fs);
 	if (retval) {
 		com_err(global_ctx->program_name, 0, _("while merging fs\n"));
 		return retval;
@@ -3096,7 +2984,7 @@ static int e2fsck_pass1_thread_join(e2fsck_t global_ctx, e2fsck_t thread_ctx)
 	errcode_t	retval;
 
 	retval = e2fsck_pass1_merge_context(global_ctx, thread_ctx);
-	ext2fs_free_mem(&thread_ctx->fs);
+	//ext2fs_free_mem(&thread_ctx->fs);
 	if (thread_ctx->logf)
 		fclose(thread_ctx->logf);
 	if (thread_ctx->problem_logf) {
