@@ -312,6 +312,12 @@ struct struct_ext2_filsys {
 	struct ext2fs_hashmap* block_sha_map;
 
 	const struct ext2fs_nls_table *encoding;
+//#ifdef HAVE_PTHREAD
+	struct struct_ext2_filsys *parent;
+	size_t refcount;
+	pthread_mutex_t refcount_mutex;
+	int clone_flags;
+//#endif
 };
 
 #if EXT2_FLAT_INCLUDES
@@ -1040,6 +1046,20 @@ extern errcode_t ext2fs_move_blocks(ext2_filsys fs,
 
 /* check_desc.c */
 extern errcode_t ext2fs_check_desc(ext2_filsys fs);
+
+
+/*
+ * flags for ext2fs_clone_fs()
+ */
+#define EXT2FS_CLONE_BLOCK		0x0001
+#define EXT2FS_CLONE_INODE		0x0002
+#define EXT2FS_CLONE_BADBLOCKS		0x0004
+#define EXT2FS_CLONE_DBLIST		0x0008
+
+/* clonefs.c , maybe static? */
+extern errcode_t ext2fs_clone_fs(ext2_filsys fs, ext2_filsys *dest, int flags);
+extern errcode_t ext2fs_free_fs(ext2_filsys fs);
+
 
 /* closefs.c */
 extern errcode_t ext2fs_close(ext2_filsys fs);
